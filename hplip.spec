@@ -7,7 +7,7 @@
 Summary: HP Linux Imaging and Printing Project
 Name: hplip
 Version: 3.14.6
-Release: 3%{?dist}
+Release: 4%{?dist}.1
 License: GPLv2+ and MIT
 Group: System Environment/Daemons
 Conflicts: system-config-printer < 0.6.132
@@ -41,6 +41,7 @@ Patch20: hplip-reportlab.patch
 Patch21: hplip-uninit.patch
 Patch22: hplip-device_open.patch
 Patch23: hplip-strncpy.patch
+Patch24: hplip-do-not-crash-on-usb-failure.patch
 
 %define hpijs_epoch 1
 Requires: hpijs%{?_isa} = %{hpijs_epoch}:%{version}-%{release}
@@ -264,6 +265,9 @@ done
 
 # Fixed uses of strncpy throughout.
 %patch23 -p1 -b .strncpy
+
+# hp/hpfax backends crash when no USB is available (bug#1297095).
+%patch24 -p1 -b .hplip-usb-no-crash
 
 sed -i.duplex-constraints \
     -e 's,\(UIConstraints.* \*Duplex\),//\1,' \
@@ -509,6 +513,12 @@ rm -rf %{buildroot}
 %postun libs -p /sbin/ldconfig
 
 %changelog
+* Wed May 18 2016 Jiri Popelka <jpopelka@redhat.com> - 3.14.6-4.1
+- rebuilt
+
+* Wed May 18 2016 Jiri Popelka <jpopelka@redhat.com> - 3.14.6-4
+- hp/hpfax backends crash when no USB is available (bug #1297095).
+
 * Wed Jan 21 2015 Tim Waugh <twugh@redhat.com> 3.14.6-3
 - Fixes from Fedora:
   - Fixed incorrect name in function call in makeURI when a parallel
