@@ -114,6 +114,8 @@ enum HPMUD_PLUGIN_TYPE
    HPMUD_PLUGIN_TYPE_OPTIONAL = 2,
 };
 
+
+
 #define HPMUD_S_PRINT_CHANNEL "PRINT"
 #define HPMUD_S_PML_CHANNEL "HP-MESSAGE"
 #define HPMUD_S_SCAN_CHANNEL "HP-SCAN"
@@ -130,7 +132,7 @@ enum HPMUD_PLUGIN_TYPE
 #define HPMUD_S_MARVELL_FAX_CHANNEL "HP-MARVELL-FAX"
 #define HPMUD_S_LEDM_SCAN "HP-LEDM-SCAN"
 #define HPMUD_S_WIFI_CHANNEL "HP-WIFICONFIG"
-
+#define HPMUD_S_MARVELL_EWS_CHANNEL "HP-MARVELL-EWS"
 typedef int HPMUD_DEVICE;       /* usb, parallel or jetdirect */
 #define HPMUD_DEVICE_MAX 2      /* zero is not used */
 
@@ -508,39 +510,6 @@ enum HPMUD_RESULT hpmud_make_net_uri(const char *ip, int port, char *uri, int ur
  *  return value - see enum definition
  */
 enum HPMUD_RESULT hpmud_make_par_uri(const char *dnode, char *uri, int uri_size, int *bytes_read);
-
-/*
- * hpmud_get_conf - get key value from hplip.conf
- *
- * This function is a stateless hpmud helper function.
- *
- * inputs:
- *  section - zero terminated string (ie: "[dirs]")
- *  key - zero terminated string (ie: "home")
- *  value_size - size of value buffer in bytes
- *
- * outputs:
- *  value - zero terminated string
- *  return value - see enum definition
- */
-enum HPMUD_RESULT hpmud_get_conf(const char *section, const char *key, char *value, int value_size);
-
-/*
- * hpmud_get_key_value - get key value from specified file
- *
- * This function is a stateless hpmud helper function.
- *
- * inputs:
- *  file - zero terminated file path
- *  section - zero terminated string (ie: "[dirs]")
- *  key - zero terminated string (ie: "home")
- *  value_size - size of value buffer in bytes
- *
- * outputs:
- *  value - zero terminated string
- *  return value - see enum definition
- */
-enum HPMUD_RESULT hpmud_get_key_value(const char *file, const char *section, const char *key, char *value, int value_size);
 
 /*
  * hpmud_mdns_lookup - lookup IP for MDNS host name

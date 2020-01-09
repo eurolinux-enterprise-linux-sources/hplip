@@ -171,7 +171,7 @@ class Module(object):
             content.append(utils.USAGE_DEVICE)
             content.append(utils.USAGE_PRINTER)
 
-        if self.avail_modes is not None and self.num_valid_modes > 1:
+        if self.avail_modes is not None and self.num_valid_modes > 0:
             summary.append('[MODE]')
             content.append(utils.USAGE_SPACE)
             content.append(utils.USAGE_MODE)
@@ -263,7 +263,7 @@ class Module(object):
             params = ''.join([params, 'd:p:P:'])
             long_params.extend(['device=', 'device-uri=', 'printer=', 'printer-name'])
 
-        if self.num_valid_modes > 1:
+        if self.num_valid_modes > 0:
             if GUI_MODE in self.avail_modes and prop.gui_build:
                 params = ''.join([params, 'u'])
                 long_params.extend(['gui', 'ui'])
@@ -444,7 +444,7 @@ class Module(object):
 
             log.info(log.bold("%s ver. %s" % (self.title, self.version)))
             log.info("")
-            log.info("Copyright (c) 2001-14 Hewlett-Packard Development Company, LP")
+            log.info("Copyright (c) 2001-13 Hewlett-Packard Development Company, LP")
             log.info("This software comes with ABSOLUTELY NO WARRANTY.")
             log.info("This is free software, and you are welcome to distribute it")
             log.info("under certain conditions. See COPYING file for more details.")
@@ -642,11 +642,11 @@ class Module(object):
         return printer_name_ret, device_uri_ret
 
 
-    def lockInstance(self, suffix=''):
+    def lockInstance(self, suffix='',suppress_error=False):
         if suffix:
-            ok, self.lock_file = utils.lock_app('-'.join([self.mod, suffix]))
+            ok, self.lock_file = utils.lock_app('-'.join([self.mod, suffix]),suppress_error)
         else:
-            ok, self.lock_file = utils.lock_app(self.mod)
+            ok, self.lock_file = utils.lock_app(self.mod,suppress_error)
 
         if not ok:
             sys.exit(1)

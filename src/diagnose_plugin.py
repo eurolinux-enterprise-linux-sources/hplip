@@ -22,8 +22,8 @@
 
 __version__ = '1.0'
 __mod__ = 'hp-diagnose_plugin'
-__title__ = 'Plugin Download and Install Utility'
-__doc__ = ""
+__title__ = 'Diagnose Plugin Utility'
+__doc__ = "Diagnose HP Plugin. Installs plugins if absent"
 
 # Std Lib
 import sys
@@ -36,6 +36,13 @@ import os
 # Local
 from base.g import *
 from base import utils, module
+
+def usage(typ='text'):
+    if typ == 'text':
+        utils.log_title(__title__, __version__)
+    utils.format_text(USAGE, typ, __title__, __mod__, __version__)
+    sys.exit(0)
+
 
 USAGE = [ (__doc__, "", "name", True),
           ("Usage: %s [OPTIONS]" % __mod__, "", "summary", True),
@@ -73,21 +80,21 @@ if mode == GUI_MODE:
         try:
             from PyQt4.QtGui import QApplication, QMessageBox
             from ui4.plugindiagnose import PluginDiagnose
-	    from installer import core_install
+            from installer import pluginhandler
         except ImportError:
             log.error("Unable to load Qt4 support. Is it installed?")
             sys.exit(1)
 
         app = QApplication(sys.argv)
-        core = core_install.CoreInstall()
-        plugin_sts = core.check_for_plugin()
+        pluginObj = pluginhandler.PluginHandle()
+        plugin_sts = pluginObj.getStatus()
         if plugin_sts == PLUGIN_INSTALLED:
             log.info("Device Plugin is already installed")
             sys.exit(0)
-        elif plugin_sts == PLUGIN_VERSION_MISMATCH:
-            dialog = PluginDiagnose(None, install_mode, plugin_reason, True)
-        else:
+        elif plugin_sts == PLUGIN_NOT_INSTALLED:
             dialog = PluginDiagnose(None, install_mode, plugin_reason)
+        else:
+            dialog = PluginDiagnose(None, install_mode, plugin_reason, True)
 
         dialog.show()
         try:

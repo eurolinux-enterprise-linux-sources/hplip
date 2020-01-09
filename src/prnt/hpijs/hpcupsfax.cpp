@@ -54,6 +54,7 @@
 #include "hpip.h"
 #include "hpcupsfax.h"
 #include "bug.h"
+#include "utils.h"
 using namespace std;
 
 int    fax_encoding = RASTER_MMR;
@@ -65,7 +66,7 @@ uint32_t (*convert_endian_l)(uint32_t);
 uint16_t (*convert_endian_s)(uint16_t);
 
 static int iLogLevel = 1;
-char hpFileName[] = "/tmp/hplipfaxLog_XXXXXX";
+char hpFileName[MAX_FILE_PATH_LEN] ;
 
 #define TIFF_HDR_SIZE 8
 #define LITTLE_ENDIAN_MODE I
@@ -75,6 +76,7 @@ char hpFileName[] = "/tmp/hplipfaxLog_XXXXXX";
 
 // GrayLevel = (5/16)R + (9/16)G + (2/16)B
 #define RGB2BW(r, g, b) (BYTE) (((r << 2) + r + (g << 3) + g + (b << 1)) >> 4)
+
 
 void RGB2Gray (BYTE *pRGBData, int iNumPixels, BYTE *pGData)
 {
@@ -420,7 +422,7 @@ BUGOUT:
  * Reading from stdin into a temp file
  * Getting the final file with HPLIP file and page headers
  */
-int ProcessTiffData(int fromFD, int toFD)
+int ProcessTiffData(int fromFD, int toFD, char* user_name)
 {
     BYTE      *p;
     int       fdTiff;
@@ -439,13 +441,17 @@ int ProcessTiffData(int fromFD, int toFD)
     int bytes_written = 0;
     int ret_status = 0;
     int bytes_read = 0;
-    char hpTiffFileName[] = "/tmp/hpliptiffXXXXXX";
+    char hpTiffFileName[MAX_FILE_PATH_LEN];
     long input_file_size = 0;
+    FILE* pFilePtrFax;
+    snprintf(hpTiffFileName,sizeof(hpTiffFileName), "%s/hp_%s_fax_tiffXXXXXX",CUPS_TMP_DIR,user_name);
 
-    fdTiff = mkstemp (hpTiffFileName);
+
+//    fdTiff = mkstemp (hpTiffFileName);
+    fdTiff = createTempFile(hpTiffFileName, &pFilePtrFax);
     if (fdTiff < 0)
     {
-        BUG ("ERROR: Unable to open Fax output file - %s for writing\n", hpTiffFileName);
+        BUG("ERROR: Unable to open Fax output file - %s for writing\n", hpTiffFileName);
         return 1;
     }
 
@@ -593,6 +599,10 @@ int ProcessTiffData(int fromFD, int toFD)
     HPLIPPUTINT32 ((szFileHeader + 9), page_counter);
     write (toFD, szFileHeader + 9, 4);
 
+	if (!(iLogLevel & SAVE_PCL_FILE))
+	{
+         unlink(hpTiffFileName);
+	}
     return ret_status;
 }
 
@@ -636,7 +646,7 @@ int main (int argc, char **argv)
     int                 fd = 0;
     int                 fdFax = -1;
     int i = 0;
-    FILE                *fdTiff;
+    FILE                *pFilePtrFax;
     cups_raster_t       *cups_raster;
     ppd_file_t          *ppd;
     ppd_attr_t          *attr;
@@ -667,12 +677,17 @@ int main (int argc, char **argv)
          i++;
     }
 
-    fdFax = mkstemp (hpFileName);
+    snprintf(hpFileName,sizeof(hpFileName),"%s/hp_%s_fax_Log_XXXXXX",CUPS_TMP_DIR, argv[2]);
+
+//    fdFax = mkstemp (hpFileName);
+    fdFax = createTempFile(hpFileName, &pFilePtrFax);
     if (fdFax < 0)
     {
-        BUG ("ERROR: Unable to open Fax output file - %s for writing\n", hpFileName);
-        return 1;
+         BUG ("ERROR: Unable to open Fax output file - %s for writing\n", hpFileName);
+         return 1;
     }
+    else
+        chmod(hpFileName, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP );
 
     /*********** MAIN ***********/
 
@@ -739,7 +754,7 @@ int main (int argc, char **argv)
 
     if (fax_encoding == RASTER_TIFF)
     {
-        status = ProcessTiffData(fd, fdFax);
+        status = ProcessTiffData(fd, fdFax, argv[2]);
     } else {
        cups_raster = cupsRasterOpen (fd, CUPS_RASTER_READ);
        if (cups_raster == NULL)

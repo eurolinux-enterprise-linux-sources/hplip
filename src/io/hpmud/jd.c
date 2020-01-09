@@ -35,6 +35,7 @@
 #include "hpmud.h"
 #include "hpmudi.h"
 
+
 mud_device_vf __attribute__ ((visibility ("hidden"))) jd_mud_device_vf = 
 {
    .open = jd_open,
@@ -55,11 +56,11 @@ static mud_channel_vf jd_channel_vf =
    .channel_read = jd_s_channel_read
 };
 
-static const int PrintPort[] = { 0, 9100, 9101, 9102 };
-static const int ScanPort0[] = { 0, 9290, 9291, 9292 };
-static const int GenericPort[] = { 0, 9220, 9221, 9222 };
-static const int ScanPort1[] = { 0, 8290, 0, 0 };        /* hack for CLJ28xx */
-static const int GenericPort1[] = { 0, 8292, 0, 0 };     /* hack for CLJ28xx (fax) */
+static const int PrintPort[] = { 0, 9100, 9100, 9101, 9102 };
+static const int ScanPort0[] = { 0, 9290, 9290, 9291, 9292 };
+static const int GenericPort[] = { 0, 9220, 9220, 9221, 9222 };
+static const int ScanPort1[] = { 0, 8290, 8290, 0, 0 };        /* hack for CLJ28xx */
+static const int GenericPort1[] = { 0, 8292, 8292, 0, 0 };     /* hack for CLJ28xx (fax) */
 
 const char __attribute__ ((visibility ("hidden"))) *kStatusOID = "1.3.6.1.4.1.11.2.3.9.1.1.7.0";            /* device id snmp oid */
 
@@ -79,14 +80,19 @@ static int ReadReply(mud_channel *pc)
    return num;
 }
 
-static int device_id(const char *ip, int port, char *buffer, int size)
+static int device_id(const char *iporhostname, int port, char *buffer, int size)
 {
    int len=0, maxSize, result, dt, status;
 
    maxSize = (size > 1024) ? 1024 : size;   /* RH8 has a size limit for device id */
 
-   if ((len = GetSnmp(ip, port, (char *)kStatusOID, (unsigned char *)buffer, maxSize, &dt, &status, &result)) == 0)
-      BUG("unable to read device-id\n");
+   if ((len = GetSnmp(iporhostname, port, (char *)kStatusOID, (unsigned char *)buffer, maxSize, &dt, &status, &result)) == 0)
+   {
+       if ((len = GetSnmp(iporhostname, PORT_PUBLIC_1, (char *)kStatusOID, (unsigned char *)buffer, maxSize, &dt, &status, &result)) == 0)
+      {
+          BUG("unable to read device-id\n");
+      }
+   }
 
    return len; /* length does not include zero termination */
 }
@@ -165,8 +171,8 @@ enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) jd_open(mud_device *pd
       if ((p = strcasestr(pd->uri, "port=")) != NULL)
          pd->port = strtol(p+5, &tail, 10);
       else
-         pd->port = 1;
-      if (pd->port > 3)
+         pd->port = PORT_PUBLIC;
+      if (pd->port > PORT_PUBLIC_3)
       {
          stat = HPMUD_R_INVALID_IP_PORT;
          BUG("invalid ip port=%d\n", pd->port);
@@ -310,14 +316,28 @@ enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) jd_channel_close(mud_d
 enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) jd_s_channel_open(mud_channel *pc)
 {
    mud_device *pd = &msp->device[pc->dindex];
-   struct sockaddr_in pin;  
+   struct sockaddr_in pin,tmp_pin;  
+   struct hostent *he;
    char buf[HPMUD_LINE_SIZE];
    int r, len, port;
    enum HPMUD_RESULT stat = HPMUD_R_IO_ERROR;
 
+   bzero(&tmp_pin, sizeof(tmp_pin)); 
    bzero(&pin, sizeof(pin));  
    pin.sin_family = AF_INET;  
-   pin.sin_addr.s_addr = inet_addr(pd->ip);  
+
+   if(inet_pton(AF_INET, pd->ip, &(tmp_pin.sin_addr))) //Returns 0 when IP is invalid.
+        pin.sin_addr.s_addr = inet_addr(pd->ip);  
+   else
+   {
+        if((he=gethostbyname(pd->ip)) == NULL)
+        {
+            BUG("gethostbyname() returned NULL\n");
+            goto bugout;  
+        }
+
+        pin.sin_addr = *((struct in_addr *)he->h_addr);
+   }
 
    switch (pc->index)
    {
@@ -837,7 +857,7 @@ enum HPMUD_RESULT hpmud_make_net_uri(const char *ip, int port, char *uri, int ur
    if (device_id(ip, port, id, sizeof(id)) > 0 && is_hp(id))
    {
       hpmud_get_model(id, model, sizeof(model));
-      if (port == 1)
+      if (port == PORT_PUBLIC)
          *bytes_read = snprintf(uri, uri_size, "hp:/net/%s?ip=%s", model, ip); 
       else
          *bytes_read = snprintf(uri, uri_size, "hp:/net/%s?ip=%s&port=%d", model, ip, port); 

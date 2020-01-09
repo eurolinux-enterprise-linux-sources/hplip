@@ -98,7 +98,10 @@ class MarvellFaxDevice(FaxDevice):
 
             lib_name = head+"/fax/plugins/fax_marvell.so"
             log.debug("Load the library %s\n" % lib_name)
-            if not os.path.exists(lib_name):
+            from installer import pluginhandler
+            pluginObj = pluginhandler.PluginHandle()
+
+            if pluginObj.getStatus() != pluginhandler.PLUGIN_INSTALLED:
                 log.error("Loading %s failed. Try after installing plugin libraries\n" %lib_name);
                 log.info("Run \"hp-plugin\" to installa plugin libraries if you are not automatically prompted\n")
                 job_id =0;
@@ -251,7 +254,11 @@ class MarvellFaxDevice(FaxDevice):
         log.debug(date_buf)
 
         result = self.libfax_marvell.create_packet(SET_FAX_SETTINGS, 0, 0, 0, 0, byref(i_buf))
-        result = self.libfax_marvell.create_fax_settings_packet(str(name), self.phone_num, date_buf, byref(c_buf))
+        
+        try:
+            result = self.libfax_marvell.create_fax_settings_packet(name.encode('utf-8'), self.phone_num, date_buf, byref(c_buf))
+        except(UnicodeEncodeError, UnicodeDecodeError):
+            log.error("Unicode Error")
 
         msg_buf = buffer(i_buf)
         msg_c_buf = buffer(c_buf)
@@ -336,7 +343,7 @@ class MarvellFaxDevice(FaxDevice):
         log.debug(date_buf)
 
         result = self.libfax_marvell.create_packet(SET_FAX_SETTINGS, 0, 0, 0, 0, byref(i_buf))
-        result = create_marvell_faxsettings_pkt(self.phone_num, self.station_name, date_buf, c_buf)
+        result = self.libfax_marvell.create_fax_settings_packet(self.phone_num, self.station_name, date_buf, c_buf)
 
         msg_buf = buffer(i_buf)
         for i in range(0, 31):
@@ -344,8 +351,8 @@ class MarvellFaxDevice(FaxDevice):
 
         set_buf.write(c_buf.raw)
         set_buf = set_buf.getvalue()
-        self.dev.writeMarvellFax(set_buf)
-        while self.dev.readMarvellFax(32, ret_buf, timeout=5):
+        self.writeMarvellFax(set_buf)
+        while self.readMarvellFax(32, ret_buf, timeout=5):
                             pass
         ret_buf = ret_buf.getvalue()
         self.closeMarvellFax()

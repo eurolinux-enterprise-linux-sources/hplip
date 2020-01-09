@@ -1,3 +1,4 @@
+#!/bin/env python
 # -*- coding: utf-8 -*-
 #
 # (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
@@ -31,18 +32,25 @@ import cStringIO
 import httplib
 import struct
 import string
+import time
 
 # Local
 from g import *
 from codes import *
 import utils
+import services
+import os_utils
 import status
 import pml
 import status
 from prnt import pcl, ldl, cups
-import models, mdns, slp
-from strings import StringTable
+from base import models, mdns, slp, avahi
+from strings import *
 
+http_result_pat = re.compile("""HTTP/\d.\d\s(\d+)""", re.I)
+
+HTTP_OK = 200
+HTTP_ERROR = 500
 
 try:
     import hpmudext
@@ -79,7 +87,7 @@ DEFAULT_FILTER = None
 VALID_FILTERS = ('print', 'scan', 'fax', 'pcard', 'copy')
 DEFAULT_BE_FILTER = ('hp',)
 
-pat_deviceuri = re.compile(r"""(.*):/(.*?)/(\S*?)\?(?:serial=(\S*)|device=(\S*)|ip=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}[^&]*)|zc=(\S+))(?:&port=(\d))?""", re.IGNORECASE)
+pat_deviceuri = re.compile(r"""(.*):/(.*?)/(\S*?)\?(?:serial=(\S*)|device=(\S*)|ip=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}[^&]*)|zc=(\S+)|hostname=(\S+))(?:&port=(\d))?""", re.IGNORECASE)
 http_pat_url = re.compile(r"""/(.*?)/(\S*?)\?(?:serial=(\S*)|device=(\S*))&loc=(\S*)""", re.IGNORECASE)
 direct_pat = re.compile(r'direct (.*?) "(.*?)" "(.*?)" "(.*?)"', re.IGNORECASE)
 
@@ -247,9 +255,9 @@ def init_dbus(dbus_loop=None):
                 session_bus = dbus.SessionBus(dbus_loop)
         except dbus.exceptions.DBusException, e:
             if os.getuid() != 0:
-                log.error("Unable to connect to dbus session bus.")
+                log.error("Unable to connect to dbus session bus. %s "%e)
             else:
-                log.debug("Unable to connect to dbus session bus (running as root?)")
+                log.debug("Unable to connect to dbus session bus (running as root?). %s "%e)
 
             dbus_avail = False
             return dbus_avail, None,  None
@@ -360,8 +368,19 @@ def makeURI(param, port=1):
             log.debug("Found: %s" % uri)
             found = True
             cups_uri = uri
-        else:
-            log.debug("Not found.")
+
+        else: # Try DNS hostname
+            log.debug("Device not found using mDNS hostname. Trying with DNS hostname %s" % param)
+
+            result_code, uri = hpmudext.make_net_uri(param, port)
+
+            if result_code == hpmudext.HPMUD_R_OK and uri:
+                uri = uri.replace("ip=","hostname=")
+                log.debug("Found: %s" % uri)
+                found = True
+                cups_uri = uri
+            else:
+                log.debug("Not found.")
 
     if not found:
         log.debug("Trying serial number %s" % param)
@@ -447,7 +466,7 @@ def queryModelByURI(device_uri):
 #
 
 def probeDevices(bus=DEFAULT_PROBE_BUS, timeout=10,
-                 ttl=4, filter=DEFAULT_FILTER,  search='', net_search='mdns',
+                 ttl=4, filter=DEFAULT_FILTER,  search='', net_search='slp',
                  back_end_filter=('hp',)):
 
     num_devices, ret_devices = 0, {}
@@ -472,7 +491,13 @@ def probeDevices(bus=DEFAULT_PROBE_BUS, timeout=10,
                 except Error, socket.error:
                     log.error("An error occured during network probe.")
                     raise ERROR_INTERNAL
-            else:
+            elif net_search == 'avahi':
+                try:
+                    detected_devices = avahi.detectNetworkDevices(ttl, timeout)
+                except Error, socket.error:
+                    log.error("An error occured during network probe.")
+                    raise ERROR_INTERNAL
+            else :#if net_search = 'mdns'
                 try:
                     detected_devices = mdns.detectNetworkDevices(ttl, timeout)
                 except Error, socket.error:
@@ -528,7 +553,6 @@ def probeDevices(bus=DEFAULT_PROBE_BUS, timeout=10,
                 bn = hpmudext.HPMUD_BUS_USB
 
             result_code, data = hpmudext.probe_devices(bn)
-
             if result_code == hpmudext.HPMUD_R_OK:
                 for x in data.splitlines():
                     m = direct_pat.match(x)
@@ -812,9 +836,14 @@ def parseDeviceURI(device_uri):
     serial = m.group(4) or ''
     dev_file = m.group(5) or ''
     host = m.group(6) or ''
-    zc = ''
-    if not host:
-        zc = host = m.group(7) or ''
+    zc = m.group(7) or ''
+    hostname = m.group(8) or ''
+
+    if hostname:
+        host = hostname
+    elif zc:
+        host = zc
+
     port = m.group(8) or 1
 
     if bus == 'net':
@@ -880,75 +909,6 @@ def validateFilterList(filter):
     return True
 
 
-#
-# UI String Queries (why is this here?)
-#
-
-inter_pat = re.compile(r"""%(.*)%""", re.IGNORECASE)
-st = StringTable()
-strings_init = False
-
-
-def initStrings():
-    global strings_init, st
-    strings_init = True
-    cycles = 0
-
-    while True:
-        found = False
-
-        for s in st.string_table:
-            short_string, long_string = st.string_table[s]
-            short_replace, long_replace = short_string, long_string
-
-            try:
-                short_match = inter_pat.match(short_string).group(1)
-            except (AttributeError, TypeError):
-                short_match = None
-
-            if short_match is not None:
-                found = True
-
-                try:
-                    short_replace, dummy = st.string_table[short_match]
-                except KeyError:
-                    log.error("String interpolation error: %s" % short_match)
-
-            try:
-                long_match = inter_pat.match(long_string).group(1)
-            except (AttributeError, TypeError):
-                long_match = None
-
-            if long_match is not None:
-                found = True
-
-                try:
-                    dummy, long_replace = st.string_table[long_match]
-                except KeyError:
-                    log.error("String interpolation error: %s" % long_match)
-
-            if found:
-                st.string_table[s] = (short_replace, long_replace)
-
-        if not found:
-            break
-        else:
-            cycles +=1
-            if cycles > 1000:
-                break
-
-
-def queryString(string_id, typ=0):
-    if not strings_init:
-        initStrings()
-
-    #log.debug("queryString(%s)" % string_id)
-    s = st.string_table.get(str(string_id), ('', ''))[typ]
-
-    if type(s) == type(''):
-        return s
-
-    return s()
 
 
 AGENT_types = { AGENT_TYPE_NONE        : 'invalid',
@@ -970,10 +930,16 @@ AGENT_types = { AGENT_TYPE_NONE        : 'invalid',
                 #AGENT_TYPE_C_K         : 'cyan_and_black',
                 AGENT_TYPE_LG_PK       : 'light_gray_and_photo_black',
                 AGENT_TYPE_LG          : 'light_gray',
-                AGENT_TYPE_G           : 'medium_gray',
+                AGENT_TYPE_G           : 'gray',
+                AGENT_TYPE_DG          : 'dark_gray',
                 AGENT_TYPE_PG          : 'photo_gray',
                 AGENT_TYPE_C_M         : 'cyan_and_magenta',
                 AGENT_TYPE_K_Y         : 'black_and_yellow',
+                AGENT_TYPE_PHOTO_BLACK : 'photo_black',
+                AGENT_TYPE_LC          : 'light_cyan',
+                AGENT_TYPE_LM          : 'light_magenta',
+                AGENT_TYPE_MATTE_BLACK : 'matte_black',
+                AGENT_TYPE_RED         : 'red',
                 AGENT_TYPE_UNSPECIFIED : 'unspecified', # Kind=5,6
             }
 
@@ -1079,6 +1045,11 @@ class Device(object):
         self.model = models.normalizeModelName(self.model)
 
         log.debug("Model/UI model: %s/%s" % (self.model, self.model_ui))
+
+        if self.bus == 'net':
+            self.http_host = self.host
+        else:
+            self.http_host = 'localhost'  
 
         # TODO:
         #service.setAlertsEx(self.hpssd_sock)
@@ -1307,6 +1278,9 @@ class Device(object):
     def openLEDM(self):
         return self.__openChannel(hpmudext.HPMUD_S_LEDM_SCAN)
 
+    def openMarvell_EWS(self):
+        return self.__openChannel(hpmudext.HPMUD_S_MARVELL_EWS_CHANNEL)
+
     def closePrint(self):
         return self.__closeChannel(hpmudext.HPMUD_S_PRINT_CHANNEL)
 
@@ -1333,6 +1307,9 @@ class Device(object):
 
     def closeLEDM(self):
         return self.__closeChannel(hpmudext.HPMUD_S_LEDM_SCAN)
+
+    def closeMarvell_EWS(self):
+        return self.__closeChannel(hpmudext.HPMUD_S_MARVELL_EWS_CHANNEL)
 
     def openCfgUpload(self):
         return self.__openChannel(hpmudext.HPMUD_S_CONFIG_UPLOAD_CHANNEL)
@@ -1382,6 +1359,9 @@ class Device(object):
 
     def getDeviceID(self):
         needs_close = False
+        self.raw_deviceID = ''
+        self.deviceID = {}
+
         if self.io_state != IO_STATE_HP_OPEN:
            try:
                self.open()
@@ -1391,10 +1371,7 @@ class Device(object):
 
         result_code, data = hpmudext.get_device_id(self.device_id)
 
-        if result_code != hpmudext.HPMUD_R_OK:
-            self.raw_deviceID = ''
-            self.deviceID = {}
-        else:
+        if result_code == hpmudext.HPMUD_R_OK:
             self.raw_deviceID = data
             self.deviceID = parseDeviceID(data)
 
@@ -1820,27 +1797,44 @@ class Device(object):
                                     'rr' : rr,
                                   })
 
+                #Check if device itself is sending the supplies info. If so, then in that case we need not check model.dat static data and
+                #compare with region, kind and type values.
+                dynamic_sku_data = False
+                for agent in agents:
+                    try:
+                        if agent['agent-sku'] != '':
+                            dynamic_sku_data = True
+                            break
+                    except:
+                        pass
+
                 a, aa = 1, 1
                 while True:
-                    mq_agent_kind = self.mq.get('r%d-agent%d-kind' % (r_value, a), -1)
-
-                    if mq_agent_kind == -1:
-                        break
-
-                    mq_agent_type = self.mq.get('r%d-agent%d-type' % (r_value, a), 0)
-                    mq_agent_sku = self.mq.get('r%d-agent%d-sku' % (r_value, a), '')
-
-                    found = False
-
-                    log.debug("Looking for kind=%d, type=%d..." % (mq_agent_kind, mq_agent_type))
-                    for agent in agents:
+                    if dynamic_sku_data:
+                        if a > len(agents):
+                            break
+                        agent = agents[a-1]
+                        mq_agent_sku = agent['agent-sku']
                         agent_kind = agent['kind']
                         agent_type = agent['type']
+                        found = True
+                    else:
+                        mq_agent_kind = self.mq.get('r%d-agent%d-kind' % (r_value, a), -1)
+                        if mq_agent_kind == -1:
+                            break
+                        mq_agent_type = self.mq.get('r%d-agent%d-type' % (r_value, a), 0)
+                        mq_agent_sku = self.mq.get('r%d-agent%d-sku' % (r_value, a), '')
+                        found = False
 
-                        if agent_kind == mq_agent_kind and \
-                           agent_type == mq_agent_type:
-                           found = True
-                           break
+                        log.debug("Looking for kind=%d, type=%d..." % (mq_agent_kind, mq_agent_type))
+                        for agent in agents:
+                            agent_kind = agent['kind']
+                            agent_type = agent['type']
+
+                            if agent_kind == mq_agent_kind and \
+                               agent_type == mq_agent_type:
+                                   found = True
+                                   break
 
                     if found:
                         log.debug("found: r%d-kind%d-type%d" % (r_value, agent_kind, agent_type))
@@ -1863,7 +1857,7 @@ class Device(object):
                         # if agent health is OK, check for low supplies. If low, use
                         # the agent level trigger description for the agent description.
                         # Otherwise, report the agent health.
-                        if (status_code == STATUS_PRINTER_IDLE or status_code == STATUS_PRINTER_OUT_OF_INK) and \
+                        if (status_code == STATUS_PRINTER_POWER_SAVE or status_code == STATUS_PRINTER_IDLE or status_code == STATUS_PRINTER_OUT_OF_INK) and \
                             (agent_health == AGENT_HEALTH_OK or
                              (agent_health == AGENT_HEALTH_FAIR_MODERATE and agent_kind == AGENT_KIND_HEAD)) and \
                             agent_level_trigger >= AGENT_LEVEL_TRIGGER_MAY_BE_LOW:
@@ -2129,6 +2123,9 @@ class Device(object):
     def readLEDM(self, bytes_to_read, stream=None, timeout=prop.read_timeout, allow_short_read=True):
         return self.__readChannel(self.openLEDM, bytes_to_read, stream, timeout, allow_short_read)
 
+    def readMarvell_EWS(self, bytes_to_read, stream=None, timeout=prop.read_timeout, allow_short_read=True):
+        return self.__readChannel(self.openMarvell_EWS, bytes_to_read, stream, timeout, allow_short_read)
+
     def readSoapFax(self, bytes_to_read, stream=None, timeout=prop.read_timeout, allow_short_read=True):
         return self.__readChannel(self.openSoapFax, bytes_to_read, stream, timeout, allow_short_read)
 
@@ -2137,6 +2134,41 @@ class Device(object):
 
     def readWifiConfig(self, bytes_to_read, stream=None, timeout=prop.read_timeout, allow_short_read=True):
         return self.__readChannel(self.openWifiConfig, bytes_to_read, stream, timeout, allow_short_read)
+
+#Common handling of reading chunked or unchunked data from LEDM devices
+    def readLEDMData(dev, func, reply, timeout=6):
+
+        END_OF_DATA="0\r\n\r\n"
+        bytes_requested = 1024
+        bytes_remaining = 0
+        chunkedFlag = True
+
+        bytes_read = func(bytes_requested, reply, timeout)
+
+        for line in reply.getvalue().splitlines():
+            if line.lower().find("content-length") != -1:
+                 bytes_remaining = int(line.split(":")[1])
+                 chunkedFlag = False
+                 break
+
+        xml_data_start = reply.getvalue().find("<?xml")
+        if (xml_data_start != -1):
+            bytes_remaining = bytes_remaining - (len(reply.getvalue())  - xml_data_start)
+
+        while bytes_read > 0:
+            temp_buf = xStringIO()
+            bytes_read = func(bytes_requested, temp_buf, timeout)
+
+            reply.write(temp_buf.getvalue())
+
+            if not chunkedFlag:     # Unchunked data
+                bytes_remaining = bytes_remaining - bytes_read
+                if bytes_remaining <= 0:
+                    break
+            elif END_OF_DATA == temp_buf.getvalue():   # Chunked data end
+                    break
+
+
 
     def __readChannel(self, opener, bytes_to_read, stream=None,
                       timeout=prop.read_timeout, allow_short_read=False):
@@ -2215,6 +2247,9 @@ class Device(object):
     def writeLEDM(self, data):
         return self.__writeChannel(self.openLEDM, data)
 
+    def writeMarvell_EWS(self, data):
+        return self.__writeChannel(self.openMarvell_EWS, data)
+
     def writeCfgDownload(self, data):
         return self.__writeChannel(self.openCfgDownload, data)
 
@@ -2271,6 +2306,52 @@ class Device(object):
 
         self.printData(data, direct=direct, raw=True)
 
+    def post(self, url, post):
+        status_type = self.mq.get('status-type', STATUS_TYPE_NONE)
+        data = """POST %s HTTP/1.1\r
+Connection: Keep-alive\r
+User-agent: hplip/2.0\r
+Host: %s\r
+Content-type: text/xml\r
+Content-length: %d\r
+\r
+%s""" % (url, self.http_host, len(post), post)
+        log.log_data(data)
+        if status_type == STATUS_TYPE_LEDM:
+            log.debug("status-type: %d" % status_type)
+            self.writeEWS_LEDM(data)
+            response = cStringIO.StringIO()
+            func = self.readEWS_LEDM
+
+            self.readLEDMData(func, response)
+
+            response = response.getvalue()
+            log.log_data(response)
+            self.closeEWS_LEDM()
+
+        elif status_type == STATUS_TYPE_LEDM_FF_CC_0:
+            log.debug("status-type: %d" % status_type)
+            self.writeLEDM(data)
+            response = cStringIO.StringIO()
+            func = self.readLEDM
+
+            self.readLEDMData(func, response)
+
+            response = response.getvalue()
+            log.log_data(response)
+            self.closeLEDM()
+
+        else:
+            log.error("Not an LEDM status-type: %d" % status_type)
+
+        match = http_result_pat.match(response)
+        if match is None: return HTTP_OK
+        try:
+            code = int(match.group(1))
+        except (ValueError, TypeError):
+            code = HTTP_ERROR
+
+        return code == HTTP_OK
 
     def printGzipFile(self, file_name, printer_name=None, direct=False, raw=True, remove=False):
         return self.printFile(file_name, printer_name, direct, raw, remove)
@@ -2352,8 +2433,7 @@ class Device(object):
                 else:
                     c = 'lp -c -d%s %s %s' % (printer_name, lp_opt, file_name)
 
-                log.debug(c)
-                exit_code = os.system(c)
+                exit_code = os_utils.execute(c)
 
                 if exit_code != 0:
                     log.error("Print command failed with exit code %d!" % exit_code)
@@ -2371,8 +2451,7 @@ class Device(object):
                 else:
                     c = 'lpr -P%s %s %s %s' % (printer_name, raw_str, rem_str, file_name)
 
-                log.debug(c)
-                exit_code = os.system(c)
+                exit_code = os_utils.execute(c)
 
                 if exit_code != 0:
                     log.error("Print command failed with exit code %d!" % exit_code)
@@ -2501,7 +2580,7 @@ class Device(object):
         if data:
             data = data.split('\r\n\r\n', 1)[1]
             if data:
-                data = status.clean(data)
+                data = status.ExtractXMLData(data)
         return data
 
 #-------------------------For LEDM SOAP PROTOCOL(FAX) Devices----------------------------------------------------------------------#
@@ -2515,7 +2594,7 @@ class Device(object):
         if data:
             data = data.split('\r\n\r\n', 1)[1]
             if data:
-                data = status.clean(data)
+                data = status.ExtractXMLData(data)
         return data
 
     def readAttributeFromXml_EWS(self, uri, attribute):
@@ -2525,8 +2604,10 @@ class Device(object):
             log.error("Unable To read the XML data from device")
             return ""
         xmlDict = utils.XMLToDictParser().parseXML(data)
+
         try:
-            return str(xmlDict[attribute])
+            #return str(xmlDict[attribute])
+            return xmlDict[attribute]
         except:
             return str("")
 
@@ -2540,9 +2621,10 @@ class Device(object):
             return ""
         xmlDict = utils.XMLToDictParser().parseXML(data)
         try:
-            return str(xmlDict[attribute])
+            return xmlDict[attribute]
         except:
             return str("")
+
 
     def downloadFirmware(self, usb_bus_id=None, usb_device_id=None): # Note: IDs not currently used
         ok = False
@@ -2639,12 +2721,16 @@ class LocalOpenerEWS_LEDM(urllib.URLopener):
             dev.writeEWS_LEDM("""GET %s HTTP/1.1\r\nAccept: text/plain\r\nHost:localhost\r\nUser-Agent:hplip\r\n\r\n""" % loc)
 
         reply = xStringIO()
+        func = dev.readEWS_LEDM
 
-        while dev.readEWS_LEDM(512, reply, timeout=3):
-            pass
+        #while dev.readEWS_LEDM(512, reply, timeout=3):
+            #pass
+
+        dev.readLEDMData(func, reply)
 
         reply.seek(0)
         return reply.getvalue()
+
 
 # URLs: hp:/usb/HP_OfficeJet_7500?serial=00XXXXXXXXXX&loc=/hp/device/info_device_status.xml
 class LocalOpener_LEDM(urllib.URLopener):
@@ -2665,12 +2751,11 @@ class LocalOpener_LEDM(urllib.URLopener):
             dev.writeLEDM("""GET %s HTTP/1.1\r\nAccept: text/plain\r\nHost:localhost\r\nUser-Agent:hplip\r\n\r\n""" % loc)
 
         reply = xStringIO()
+        func = dev.readLEDM
 
-        while dev.readLEDM(512, reply, timeout=3):
-            pass
+        #while dev.readLEDM(512, reply, timeout=3):
+            #pass
+        dev.readLEDMData(func, reply)
 
         reply.seek(0)
         return reply.getvalue()
-
-
-

@@ -22,8 +22,21 @@
 # StdLib
 import time
 import cStringIO
-import xml.parsers.expat
+from base.g import *
+try:
+   import xml.parsers.expat
+except ImportError,e:
+   log.info("\n")
+   log.error("Failed to import xml.parsers.expat(%s).\nThis may be due to the incompatible version of python-xml package.\n"%(e))
+   if "undefined symbol" in str(e):
+       log.info(log.blue("Please re-install compatible version (other than 2.7.2-7.14.1) due to bug reported at 'https://bugzilla.novell.com/show_bug.cgi?id=766778'."))
+       log.info(log.blue("\n        Run the following commands in root mode to change the python-xml package.(i.e Installing 2.7.2-7.1.2)"))
+       log.info(log.blue("\n        Using zypper:\n        'zypper remove python-xml'\n        'zypper install python-xml-2.7.2-7.1.2'"))
+       log.info(log.blue("\n        Using apt-get:\n        'apt-get remove python-xml'\n        'apt-get install python-xml-2.7.2-7.1.2'"))
+       log.info(log.blue("\n        Using yum:\n        'yum remove python-xml'\n        'yum install python-xml-2.7.2-7.1.2'"))
 
+   sys.exit(1)
+   
 # Local
 from base.g import *
 from base import device, utils
@@ -189,7 +202,9 @@ def getAdaptorList(dev):
 # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 def getWifiAdaptorID(dev):
-    # ret: adaptor_id, name, state, presence
+    # rVal: [[adaptor_id, name, state, presence]]
+    # ret: [adaptor_id, name, state, presence]
+    rVal = []
     ret = getAdaptorList(dev)
 
     try:
@@ -218,31 +233,36 @@ def getWifiAdaptorID(dev):
 
                 r.append(x)
 
-            return r
+            rVal.append(r)
+            
+    return rVal
 
-    return -1, 'Unknown', 'Unknown', 'Unknown'
 
 # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-
-
-def setAdaptorPower(dev, adapterName, adaptor_id=0, power_state='PowerOn'):
-    ret = {}
-    request = PREAMBLE + """<SetAdaptorPowerRequest>
+                         
+def setAdaptorPower(dev, adapterList, power_state='PowerOn'):
+    adaptor_id=-1
+    adaptorName =""
+    for a in adapterList:
+        adaptor_id = a[0]
+        adaptorName = a[1]
+        request = PREAMBLE + """<SetAdaptorPowerRequest>
 <AdaptorID>%s</AdaptorID>
 <PowerState>%s</PowerState>
 </SetAdaptorPowerRequest>
 </WiFiConfig>""" % (adaptor_id, power_state.encode('utf-8'))
 
-    errorreturn, params = _readWriteWifiConfig(dev, request)
-    if not params:
-        return {}
+        errorreturn, params = _readWriteWifiConfig(dev, request)
+        if not params:
+            return -1 ,"","",""
 
-    ret['errorreturn'] = errorreturn
-    if errorreturn != 'ok':
-        log.error("SetAdaptorPower returned an error: %s" % errorreturn)
-        return ret
+        if errorreturn != 'ok':
+            log.error("SetAdaptorPower returned an error: %s" % errorreturn)
+        else:
+            log.debug("SetAdaptorPower returned Success.")
+            return adaptor_id, adaptorName, a[2], a[3]
 
-    return ret
+    return -1 ,"","",""
 
 # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 

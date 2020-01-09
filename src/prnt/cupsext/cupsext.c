@@ -79,6 +79,8 @@ Yashwant Kumar Sahu
 #include <cups/cups.h>
 #include <cups/language.h>
 #include <cups/ppd.h>
+#include <sys/types.h>
+#include <pwd.h>
 
 /* Ref: PEP 353 (Python 2.5) */
 #if PY_VERSION_HEX < 0x02050000
@@ -87,6 +89,75 @@ typedef int Py_ssize_t;
 #define PY_SSIZE_T_MIN INT_MIN
 #endif
 
+#if (CUPS_VERSION_MAJOR > 1) || (CUPS_VERSION_MINOR > 5)
+    #define HAVE_CUPS_1_6 1
+#endif
+
+#ifndef HAVE_CUPS_1_6
+    #define ippGetCount(attr)     attr->num_values
+    #define ippGetGroupTag(attr)  attr->group_tag
+    #define ippGetValueTag(attr)  attr->value_tag
+    #define ippGetName(attr)      attr->name
+    #define ippGetBoolean(attr, element) attr->values[element].boolean
+    #define ippGetInteger(attr, element) attr->values[element].integer
+    #define ippGetStatusCode(ipp) ipp->request.status.status_code
+    #define ippGetString(attr, element, language) attr->values[element].string.text
+
+
+    static ipp_attribute_t * ippFirstAttribute( ipp_t *ipp )
+    {
+        if (!ipp)
+            return (NULL);
+        return (ipp->current = ipp->attrs);
+    }
+
+    static ipp_attribute_t * ippNextAttribute( ipp_t *ipp )
+    {
+        if (!ipp || !ipp->current)
+            return (NULL);
+        return (ipp->current = ipp->current->next);
+    }
+
+    static int ippSetOperation( ipp_t *ipp, ipp_op_t op )
+    {
+        if (!ipp)
+            return (0);
+        ipp->request.op.operation_id = op;
+        return (1);
+    }
+
+    static int ippSetRequestId( ipp_t *ipp, int request_id )
+    {
+        if (!ipp)
+            return (0);
+        ipp->request.any.request_id = request_id;
+        return (1);
+    }
+#endif
+
+static http_t * http = NULL;     /* HTTP object */
+
+static http_t* acquireCupsInstance()
+{
+    if ( http == NULL)
+    {
+        http = httpConnectEncrypt( cupsServer(), ippPort(), cupsEncryption() );
+    }
+
+    return http;
+}
+
+
+PyObject * releaseCupsInstance( PyObject * self, PyObject * args )
+{
+    if (http)
+    {
+        httpClose(http);
+    }
+    
+    http = NULL;
+    return Py_BuildValue( "i", 1 );
+}
 
 int g_num_options = 0;
 cups_option_t * g_options;
@@ -97,8 +168,19 @@ cups_dest_t * dest = NULL;
 cups_dest_t * g_dests = NULL;
 int g_num_dests = 0;
 
+static int auth_cancel_req = 0;    // 0--> authentication cancel is not requested, 1 --> authentication cancelled
+
 const char * g_ppd_file = NULL;
 
+static char *getUserName()
+{
+  struct passwd *pw = getpwuid(geteuid());
+  if (pw)
+  {
+    return pw->pw_name;
+  }
+  return NULL;
+}
 /*
  * 'validate_name()' - Make sure the printer name only contains valid chars.
  */
@@ -181,60 +263,60 @@ static void printer_dealloc( printer_Object * self )
 
 
 static PyMemberDef printer_members[] =
-    {
-        { "device_uri", T_OBJECT_EX, offsetof( printer_Object, device_uri ), 0, "Device URI (device-uri)" },
-        { "printer_uri", T_OBJECT_EX, offsetof( printer_Object, printer_uri ), 0, "Printer URI (printer-uri)" },
-        { "name", T_OBJECT_EX, offsetof( printer_Object, name ), 0, "Name (printer-name)" },
-        { "location", T_OBJECT_EX, offsetof( printer_Object, location ), 0, "Location (printer-location)" },
-        { "makemodel", T_OBJECT_EX, offsetof( printer_Object, makemodel ), 0, "Make and model (printer-make-and-model)" },
-        { "state", T_INT, offsetof( printer_Object, state ), 0, "State (printer-state)" },
-        { "info", T_OBJECT_EX, offsetof( printer_Object, info ), 0, "Info/description (printer-info)" },
-        { "accepting", T_INT, offsetof( printer_Object, accepting ), 0, "Accepting/rejecting" },
-        {0}
-    };
+{
+    { "device_uri", T_OBJECT_EX, offsetof( printer_Object, device_uri ), 0, "Device URI (device-uri)" },
+    { "printer_uri", T_OBJECT_EX, offsetof( printer_Object, printer_uri ), 0, "Printer URI (printer-uri)" },
+    { "name", T_OBJECT_EX, offsetof( printer_Object, name ), 0, "Name (printer-name)" },
+    { "location", T_OBJECT_EX, offsetof( printer_Object, location ), 0, "Location (printer-location)" },
+    { "makemodel", T_OBJECT_EX, offsetof( printer_Object, makemodel ), 0, "Make and model (printer-make-and-model)" },
+    { "state", T_INT, offsetof( printer_Object, state ), 0, "State (printer-state)" },
+    { "info", T_OBJECT_EX, offsetof( printer_Object, info ), 0, "Info/description (printer-info)" },
+    { "accepting", T_INT, offsetof( printer_Object, accepting ), 0, "Accepting/rejecting" },
+    {0}
+};
 
 static PyTypeObject printer_Type =
-    {
-        PyObject_HEAD_INIT( &PyType_Type )
-        0,                                     /* ob_size */
-        "cupsext.Printer",                   /* tp_name */
-        sizeof( printer_Object ),              /* tp_basicsize */
-        0,                                     /* tp_itemsize */
-        ( destructor ) printer_dealloc,           /* tp_dealloc */
-        0,                                     /* tp_print */
-        0,                                     /* tp_getattr */
-        0,                                     /* tp_setattr */
-        0,                                     /* tp_compare */
-        0,                                     /* tp_repr */
-        0,                                     /* tp_as_number */
-        0,                                     /* tp_as_sequence */
-        0,                                     /* tp_as_mapping */
-        0,                                     /* tp_hash */
-        0,                                     /* tp_call */
-        0,                                     /* tp_str */
-        PyObject_GenericGetAttr,               /* tp_getattro */
-        PyObject_GenericSetAttr,               /* tp_setattro */
-        0,                                     /* tp_as_buffer */
-        Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,         /* tp_flags */
-        "CUPS Printer object",                 /* tp_doc */
-        0,                                     /* tp_traverse */
-        0,                                     /* tp_clear */
-        0,                                     /* tp_richcompare */
-        0,                                     /* tp_weaklistoffset */
-        0,                                     /* tp_iter */
-        0,                                     /* tp_iternext */
-        0,         /*job_methods, */           /* tp_methods */
-        printer_members,                       /* tp_members */
-        0,                                     /* tp_getset */
-        0,                                     /* tp_base */
-        0,                                     /* tp_dict */
-        0,                                     /* tp_descr_get */
-        0,                                     /* tp_descr_set */
-        0,                                     /* tp_dictoffset */
-        0,                                     /* tp_init */
-        0,                                     /* tp_alloc */
-        0,                                     /* tp_new */
-    };
+{
+    PyObject_HEAD_INIT( &PyType_Type )
+    0,                                     /* ob_size */
+    "cupsext.Printer",                   /* tp_name */
+    sizeof( printer_Object ),              /* tp_basicsize */
+    0,                                     /* tp_itemsize */
+    ( destructor ) printer_dealloc,           /* tp_dealloc */
+    0,                                     /* tp_print */
+    0,                                     /* tp_getattr */
+    0,                                     /* tp_setattr */
+    0,                                     /* tp_compare */
+    0,                                     /* tp_repr */
+    0,                                     /* tp_as_number */
+    0,                                     /* tp_as_sequence */
+    0,                                     /* tp_as_mapping */
+    0,                                     /* tp_hash */
+    0,                                     /* tp_call */
+    0,                                     /* tp_str */
+    PyObject_GenericGetAttr,               /* tp_getattro */
+    PyObject_GenericSetAttr,               /* tp_setattro */
+    0,                                     /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,         /* tp_flags */
+    "CUPS Printer object",                 /* tp_doc */
+    0,                                     /* tp_traverse */
+    0,                                     /* tp_clear */
+    0,                                     /* tp_richcompare */
+    0,                                     /* tp_weaklistoffset */
+    0,                                     /* tp_iter */
+    0,                                     /* tp_iternext */
+    0,         /*job_methods, */           /* tp_methods */
+    printer_members,                       /* tp_members */
+    0,                                     /* tp_getset */
+    0,                                     /* tp_base */
+    0,                                     /* tp_dict */
+    0,                                     /* tp_descr_get */
+    0,                                     /* tp_descr_set */
+    0,                                     /* tp_dictoffset */
+    0,                                     /* tp_init */
+    0,                                     /* tp_alloc */
+    0,                                     /* tp_new */
+};
 
 
 
@@ -289,7 +371,8 @@ static PyObject * newPrinter( PyObject * self, PyObject * args, PyObject * kwarg
     int accepting = 0;
 
     char * kwds[] = { "device_uri", "name", "printer_uri", "location",
-                      "makemodel", "info", "state", "accepting", NULL };
+                      "makemodel", "info", "state", "accepting", NULL
+                    };
 
     if ( !PyArg_ParseTupleAndKeywords( args, kwargs, "zz|zzzzii", kwds,
                                        &device_uri, &name, &printer_uri,
@@ -304,12 +387,12 @@ static PyObject * newPrinter( PyObject * self, PyObject * args, PyObject * kwarg
 
 PyObject * getPrinters( PyObject * self, PyObject * args )
 {
-    http_t * http = NULL;     /* HTTP object */
     ipp_t *request = NULL;  /* IPP request object */
     ipp_t *response = NULL; /* IPP response object */
     ipp_attribute_t *attr;     /* Current IPP attribute */
     PyObject * printer_list;
     cups_lang_t * language;
+    printer_list = PyList_New( 0 );
 
     static const char * attrs[] =         /* Requested attributes */
     {
@@ -324,17 +407,18 @@ PyObject * getPrinters( PyObject * self, PyObject * args )
     };
 
     /* Connect to the HTTP server */
-    if ( ( http = httpConnectEncrypt( cupsServer(), ippPort(), cupsEncryption() ) ) == NULL )
+    if (acquireCupsInstance() == NULL)
     {
         goto abort;
     }
+
 
     /* Assemble the IPP request */
     request = ippNew();
     language = cupsLangDefault();
 
-    request->request.op.operation_id = CUPS_GET_PRINTERS;
-    request->request.any.request_id = 1;
+    ippSetOperation( request, CUPS_GET_PRINTERS );
+    ippSetRequestId ( request, 1);
 
     ippAddString( request, IPP_TAG_OPERATION, IPP_TAG_CHARSET,
                   "attributes-charset", NULL, cupsLangEncoding( language ) );
@@ -363,10 +447,6 @@ PyObject * getPrinters( PyObject * self, PyObject * args )
 
     if ( max_count > 0 )
     {
-
-        //printer_list = PyList_New( max_count );
-        printer_list = PyList_New( 0 );
-
         char * device_uri = "";
         char * printer_uri = "";
         char * info = "";
@@ -378,10 +458,10 @@ PyObject * getPrinters( PyObject * self, PyObject * args )
         ipp_pstate_t state;
         int i = 0;
 
-        for ( attr = response->attrs; attr != NULL; attr = attr->next )
+        for ( attr = ippFirstAttribute( response ); attr != NULL; attr = ippNextAttribute( response ) )
         {
-            while ( attr != NULL && attr->group_tag != IPP_TAG_PRINTER )
-                attr = attr->next;
+            while ( attr != NULL && ippGetGroupTag( attr ) != IPP_TAG_PRINTER )
+                attr = ippNextAttribute( response );
 
             if ( attr == NULL )
                 break;
@@ -390,41 +470,41 @@ PyObject * getPrinters( PyObject * self, PyObject * args )
             state = IPP_PRINTER_IDLE;
             accepting = 0;
 
-            while ( attr != NULL && attr->group_tag == IPP_TAG_PRINTER )
+            while ( attr != NULL && ippGetGroupTag( attr ) == IPP_TAG_PRINTER )
             {
-                if ( strcmp( attr->name, "printer-name" ) == 0 &&
-                        attr->value_tag == IPP_TAG_NAME )
-                    name = attr->values[ 0 ].string.text;
+                if ( strcmp( ippGetName( attr ), "printer-name" ) == 0 &&
+                        ippGetValueTag( attr ) == IPP_TAG_NAME )
+                    name = ippGetString( attr, 0, NULL );
 
-                else if ( strcmp( attr->name, "device-uri" ) == 0 &&
-                        attr->value_tag == IPP_TAG_URI )
-                    device_uri = attr->values[ 0 ].string.text;
+                else if ( strcmp( ippGetName( attr ), "device-uri" ) == 0 &&
+                          ippGetValueTag( attr ) == IPP_TAG_URI )
+                    device_uri = ippGetString( attr, 0, NULL );
 
-                else if ( strcmp( attr->name, "printer-uri-supported" ) == 0 &&
-                        attr->value_tag == IPP_TAG_URI )
-                    printer_uri = attr->values[ 0 ].string.text;
+                else if ( strcmp( ippGetName( attr ), "printer-uri-supported" ) == 0 &&
+                          ippGetValueTag( attr ) == IPP_TAG_URI )
+                    printer_uri = ippGetString( attr, 0, NULL );
 
-                else if ( strcmp( attr->name, "printer-info" ) == 0 &&
-                        attr->value_tag == IPP_TAG_TEXT )
-                    info = attr->values[ 0 ].string.text;
+                else if ( strcmp( ippGetName( attr ), "printer-info" ) == 0 &&
+                          ippGetValueTag( attr ) == IPP_TAG_TEXT )
+                    info = ippGetString( attr, 0, NULL );
 
-                else if ( strcmp( attr->name, "printer-location" ) == 0 &&
-                        attr->value_tag == IPP_TAG_TEXT )
-                    location = attr->values[ 0 ].string.text;
+                else if ( strcmp( ippGetName( attr ), "printer-location" ) == 0 &&
+                          ippGetValueTag( attr ) == IPP_TAG_TEXT )
+                    location = ippGetString( attr, 0, NULL );
 
-                else if ( strcmp( attr->name, "printer-make-and-model" ) == 0 &&
-                        attr->value_tag == IPP_TAG_TEXT )
-                    make_model = attr->values[ 0 ].string.text;
+                else if ( strcmp( ippGetName( attr ), "printer-make-and-model" ) == 0 &&
+                          ippGetValueTag( attr ) == IPP_TAG_TEXT )
+                    make_model = ippGetString( attr, 0, NULL );
 
-                else if ( strcmp( attr->name, "printer-state" ) == 0 &&
-                        attr->value_tag == IPP_TAG_ENUM )
-                    state = ( ipp_pstate_t ) attr->values[ 0 ].integer;
+                else if ( strcmp( ippGetName( attr ), "printer-state" ) == 0 &&
+                          ippGetValueTag( attr ) == IPP_TAG_ENUM )
+                    state = ( ipp_pstate_t ) ippGetInteger( attr, 0 );
 
-                else if (!strcmp(attr->name, "printer-is-accepting-jobs") &&
-                        attr->value_tag == IPP_TAG_BOOLEAN)
-                    accepting = attr->values[ 0 ].boolean;
+                else if (!strcmp(ippGetName( attr ), "printer-is-accepting-jobs") &&
+                         ippGetValueTag( attr ) == IPP_TAG_BOOLEAN)
+                    accepting = ippGetBoolean( attr, 0 );
 
-                attr = attr->next;
+                attr = ippNextAttribute( response );
             }
 
             if ( device_uri == NULL )
@@ -437,7 +517,7 @@ PyObject * getPrinters( PyObject * self, PyObject * args )
 
             printer_Object * printer;
             printer = ( printer_Object * ) _newPrinter( device_uri, name, printer_uri, location, make_model,
-                    info, state, accepting );
+                      info, state, accepting );
 
             //PyList_SetItem( printer_list, i, ( PyObject * ) printer );
             PyList_Append( printer_list, ( PyObject * ) printer );
@@ -448,16 +528,11 @@ PyObject * getPrinters( PyObject * self, PyObject * args )
                 break;
         }
 
-        return printer_list;
     }
 abort:
     if ( response != NULL )
         ippDelete( response );
 
-    if ( http != NULL )
-        httpClose( http );
-
-    printer_list = PyList_New( ( Py_ssize_t ) 0 );
     return printer_list;
 }
 
@@ -465,12 +540,10 @@ abort:
 PyObject * addPrinter( PyObject * self, PyObject * args )
 {
     //char buf[1024];
-    ipp_status_t status;
-    http_t *http = NULL;     /* HTTP object */
+    ipp_status_t status = IPP_BAD_REQUEST;
     ipp_t *request = NULL;  /* IPP request object */
     ipp_t *response = NULL; /* IPP response object */
     cups_lang_t * language;
-    int r;
     char printer_uri[ HTTP_MAX_URI ];
     char * name, * device_uri, *location, *ppd_file, * info, * model;
     const char * status_str = "successful-ok";
@@ -484,22 +557,19 @@ PyObject * addPrinter( PyObject * self, PyObject * args )
                             &info              // info/description
                           ) )
     {
-        r = 0;
         status_str = "Invalid arguments";
         goto abort;
     }
 
     if ( ( strlen( ppd_file ) > 0 && strlen( model ) > 0 ) ||
-         ( strlen( ppd_file ) == 0 && strlen( model ) == 0) )
+            ( strlen( ppd_file ) == 0 && strlen( model ) == 0) )
     {
-        r = 0;
         status_str = "Invalid arguments: specify only ppd_file or model, not both or neither";
         goto abort;
     }
 
     if ( !validate_name( name ) )
     {
-        r = 0;
         status_str = "Invalid printer name";
         goto abort;
     }
@@ -510,10 +580,10 @@ PyObject * addPrinter( PyObject * self, PyObject * args )
     if ( info == NULL )
         strcpy( info, name );
 
+    cupsSetUser ("root");
     /* Connect to the HTTP server */
-    if ( ( http = httpConnectEncrypt( cupsServer(), ippPort(), cupsEncryption() ) ) == NULL )
+    if (acquireCupsInstance() == NULL)
     {
-        r = 0;
         status_str = "Unable to connect to CUPS server";
         goto abort;
     }
@@ -522,8 +592,8 @@ PyObject * addPrinter( PyObject * self, PyObject * args )
     request = ippNew();
     language = cupsLangDefault();
 
-    request->request.op.operation_id = CUPS_ADD_PRINTER;
-    request->request.any.request_id = 1;
+    ippSetOperation( request, CUPS_ADD_PRINTER );
+    ippSetRequestId ( request, 1 );
 
     ippAddString( request, IPP_TAG_OPERATION, IPP_TAG_CHARSET,
                   "attributes-charset", NULL, cupsLangEncoding( language ) );
@@ -561,29 +631,27 @@ PyObject * addPrinter( PyObject * self, PyObject * args )
         response = cupsDoFileRequest( http, request, "/admin/", ppd_file );
     }
 
-    if ( response == NULL )
-    {
+    if (response == NULL)
         status = cupsLastError();
-        r = 0;
-    }
     else
+        status = ippGetStatusCode( response );
+
+    // If user cancels the authentication pop-up, changing error code to IPP_NOT_AUTHENTICATED from IPP_FORBIDDEN
+    if (status == IPP_FORBIDDEN && auth_cancel_req)
     {
-        status = response->request.status.status_code;
-        //ippDelete( response );
-        r = 1;
+        status = IPP_NOT_AUTHENTICATED;
+        auth_cancel_req = 0;    // Reseting cancel request.
     }
 
     status_str = ippErrorString( status );
+    if ( status <= IPP_OK_CONFLICT )
+        status =IPP_OK;
 
 abort:
-
-    if ( http != NULL )
-        httpClose( http );
-
     if ( response != NULL )
         ippDelete( response );
 
-    return Py_BuildValue( "is", r, status_str );
+    return Py_BuildValue( "is", status, status_str );
 
 }
 
@@ -597,9 +665,9 @@ PyObject * delPrinter( PyObject * self, PyObject * args )
     cups_lang_t *language;                /* Default language */
     char uri[ HTTP_MAX_URI ];        /* URI for printer/class */
     char * name;
-    http_t *http = NULL;     /* HTTP object */
     int r = 0;
     const char *username = NULL;
+    const char * status_str = "";
 
     username = cupsUser();
 
@@ -614,8 +682,9 @@ PyObject * delPrinter( PyObject * self, PyObject * args )
         goto abort;
     }
 
+    cupsSetUser ("root");
     /* Connect to the HTTP server */
-    if ( ( http = httpConnectEncrypt( cupsServer(), ippPort(), cupsEncryption() ) ) == NULL )
+    if (acquireCupsInstance() == NULL)
     {
         goto abort;
     }
@@ -631,8 +700,8 @@ PyObject * delPrinter( PyObject * self, PyObject * args )
        */
     request = ippNew();
 
-    request->request.op.operation_id = CUPS_DELETE_PRINTER;
-    request->request.op.request_id = 1;
+    ippSetOperation( request, CUPS_DELETE_PRINTER );
+    ippSetRequestId ( request, 1 );
 
     language = cupsLangDefault();
 
@@ -650,22 +719,30 @@ PyObject * delPrinter( PyObject * self, PyObject * args )
      */
     response = cupsDoRequest( http, request, "/admin/" );
 
-    if ( ( response != NULL ) && ( response->request.status.status_code <= IPP_OK_CONFLICT ) )
+    if (response == NULL)
+        r = cupsLastError();
+    else
+        r = ippGetStatusCode( response );
+
+    // If user cancels the authentication pop-up, changing error code to IPP_NOT_AUTHENTICATED from IPP_FORBIDDEN
+    if (r == IPP_FORBIDDEN && auth_cancel_req)
     {
-        r = 1;
+        r = IPP_NOT_AUTHENTICATED;
+        auth_cancel_req = 0;    // Reseting cancel request.
     }
+
+    status_str = ippErrorString( r );
+    if ( r <= IPP_OK_CONFLICT )
+        r = IPP_OK;
 
 abort:
     if (username)
         cupsSetUser(username);
 
-    if ( http != NULL )
-        httpClose( http );
-
     if ( response != NULL )
         ippDelete( response );
 
-    return Py_BuildValue( "i", r );
+    return Py_BuildValue( "is", r ,status_str);
 
 }
 
@@ -678,12 +755,12 @@ PyObject * setDefaultPrinter( PyObject * self, PyObject * args )
 {
     char uri[ HTTP_MAX_URI ];        /* URI for printer/class */
     ipp_t *request = NULL,                        /* IPP Request */
-          *response = NULL;                /* IPP Response */
+                     *response = NULL;                /* IPP Response */
     cups_lang_t *language;                /* Default language */
     char * name;
-    http_t *http = NULL;     /* HTTP object */
     int r = 0;
     const char *username = NULL;
+    const char * status_str = "";
 
     username = cupsUser();
 
@@ -702,8 +779,9 @@ PyObject * setDefaultPrinter( PyObject * self, PyObject * args )
         goto abort;
     }
 
+    cupsSetUser ("root");
     /* Connect to the HTTP server */
-    if ( ( http = httpConnectEncrypt( cupsServer(), ippPort(), cupsEncryption() ) ) == NULL )
+    if ( acquireCupsInstance () == NULL)
     {
         goto abort;
     }
@@ -721,8 +799,8 @@ PyObject * setDefaultPrinter( PyObject * self, PyObject * args )
 
     request = ippNew();
 
-    request->request.op.operation_id = CUPS_SET_DEFAULT;
-    request->request.op.request_id = 1;
+    ippSetOperation( request, CUPS_SET_DEFAULT );
+    ippSetRequestId ( request, 1 );
 
     language = cupsLangDefault();
 
@@ -743,22 +821,30 @@ PyObject * setDefaultPrinter( PyObject * self, PyObject * args )
 
     response = cupsDoRequest( http, request, "/admin/" );
 
-    if ( ( response != NULL ) && ( response->request.status.status_code <= IPP_OK_CONFLICT ) )
+    if (response == NULL)
+        r = cupsLastError();
+    else
+        r = ippGetStatusCode(response );
+
+    // If user cancels the authentication pop-up, changing error code to IPP_NOT_AUTHENTICATED from IPP_FORBIDDEN
+    if (r == IPP_FORBIDDEN && auth_cancel_req)
     {
-        r = 1;
+        r = IPP_NOT_AUTHENTICATED;
+        auth_cancel_req = 0;    // Reseting cancel request.
     }
+
+    status_str = ippErrorString( r );
+    if ( r <= IPP_OK_CONFLICT )
+        r = IPP_OK;
 
 abort:
     if (username)
         cupsSetUser(username);
 
-    if ( http != NULL )
-        httpClose( http );
-
     if ( response != NULL )
         ippDelete( response );
 
-    return Py_BuildValue( "i", r );
+    return Py_BuildValue( "is", r,status_str );
 
 
 }
@@ -768,14 +854,14 @@ abort:
 PyObject * controlPrinter( PyObject * self, PyObject * args )
 {
     ipp_t *request = NULL,                 /* IPP Request */
-          *response = NULL;                /* IPP Response */
+                     *response = NULL;                /* IPP Response */
     char * name;
-    http_t *http = NULL;     /* HTTP object */
     int op;
-    int r = 0;
+    int r = IPP_BAD_REQUEST;
     char uri[ HTTP_MAX_URI ];        /* URI for printer/class */
     cups_lang_t *language;
     const char *username = NULL;
+    const char * status_str = "";
 
     username = cupsUser();
 
@@ -789,16 +875,17 @@ PyObject * controlPrinter( PyObject * self, PyObject * args )
         goto abort;
     }
 
+    cupsSetUser ("root");
     /* Connect to the HTTP server */
-    if ( ( http = httpConnectEncrypt( cupsServer(), ippPort(), cupsEncryption() ) ) == NULL )
+    if (acquireCupsInstance () == NULL)
     {
         goto abort;
     }
 
     request = ippNew();
 
-    request->request.op.operation_id = op;
-    request->request.op.request_id = 1;
+    ippSetOperation( request, op );
+    ippSetRequestId ( request, 1 );
 
     language = cupsLangDefault();
 
@@ -815,29 +902,37 @@ PyObject * controlPrinter( PyObject * self, PyObject * args )
 
 
     ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_NAME,
-                "requesting-user-name", NULL, cupsUser());
+                 "requesting-user-name", NULL, cupsUser());
 
     if (op == IPP_PURGE_JOBS)
         ippAddBoolean(request, IPP_TAG_OPERATION, "purge-jobs", 1);
 
     response = cupsDoRequest(http, request, "/admin/");
 
-    if (( response != NULL ) && (response->request.status.status_code <= IPP_OK_CONFLICT))
+    if (response == NULL)
+        r = cupsLastError();
+    else
+        r = ippGetStatusCode( response );
+
+    // If user cancels the authentication pop-up, changing error code to IPP_NOT_AUTHENTICATED from IPP_FORBIDDEN
+    if (r == IPP_FORBIDDEN && auth_cancel_req)
     {
-        r = 1;
+        r = IPP_NOT_AUTHENTICATED;
+        auth_cancel_req = 0;    // Reseting cancel request.
     }
+
+    status_str = ippErrorString( r );
+    if ( r <= IPP_OK_CONFLICT)
+        r = IPP_OK;
 
 abort:
     if (username)
         cupsSetUser(username);
 
-    if ( http != NULL )
-        httpClose( http );
-
     if ( response != NULL )
         ippDelete( response );
 
-    return Py_BuildValue( "i", r );;
+    return Py_BuildValue( "is", r, status_str );
 }
 
 
@@ -868,63 +963,63 @@ static void job_dealloc( job_Object * self )
 }
 
 static PyMemberDef job_members[] =
-    {
-        { "id", T_INT, offsetof( job_Object, id ), 0, "Id" },
-        { "dest", T_OBJECT_EX, offsetof( job_Object, dest ), 0, "Destination" },
-        { "state", T_INT, offsetof( job_Object, state ), 0, "State" },
-        { "title", T_OBJECT_EX, offsetof( job_Object, title ), 0, "Title" },
-        { "user", T_OBJECT_EX, offsetof( job_Object, user ), 0, "User" },
-        { "size", T_INT, offsetof( job_Object, size ), 0, "Size" },
-        {0}
-    };
+{
+    { "id", T_INT, offsetof( job_Object, id ), 0, "Id" },
+    { "dest", T_OBJECT_EX, offsetof( job_Object, dest ), 0, "Destination" },
+    { "state", T_INT, offsetof( job_Object, state ), 0, "State" },
+    { "title", T_OBJECT_EX, offsetof( job_Object, title ), 0, "Title" },
+    { "user", T_OBJECT_EX, offsetof( job_Object, user ), 0, "User" },
+    { "size", T_INT, offsetof( job_Object, size ), 0, "Size" },
+    {0}
+};
 
 
 
 static PyTypeObject job_Type =
-    {
-        PyObject_HEAD_INIT( &PyType_Type )
-        0,                                     /* ob_size */
-        "Job",                                 /* tp_name */
-        sizeof( job_Object ),                  /* tp_basicsize */
-        0,                                     /* tp_itemsize */
-        ( destructor ) job_dealloc,               /* tp_dealloc */
-        0,                                     /* tp_print */
-        0,                                     /* tp_getattr */
-        0,                                     /* tp_setattr */
-        0,                                     /* tp_compare */
-        0,                                     /* tp_repr */
-        0,                                     /* tp_as_number */
-        0,                                     /* tp_as_sequence */
-        0,                                     /* tp_as_mapping */
-        0,                                     /* tp_hash */
-        0,                                     /* tp_call */
-        0,                                     /* tp_str */
-        PyObject_GenericGetAttr,               /* tp_getattro */
-        PyObject_GenericSetAttr,               /* tp_setattro */
-        0,                                     /* tp_as_buffer */
-        Py_TPFLAGS_DEFAULT,                    /* tp_flags */
-        "CUPS Job object",                     /* tp_doc */
-        0,                                     /* tp_traverse */
-        0,                                     /* tp_clear */
-        0,                                     /* tp_richcompare */
-        0,                                     /* tp_weaklistoffset */
-        0,                                     /* tp_iter */
-        0,                                     /* tp_iternext */
-        0,         /*job_methods, */                  /* tp_methods */
-        job_members,                           /* tp_members */
-        0,                                     /* tp_getset */
-        0,                                     /* tp_base */
-        0,                                     /* tp_dict */
-        0,                                     /* tp_descr_get */
-        0,                                     /* tp_descr_set */
-        0,                                     /* tp_dictoffset */
-        0,                                     /* tp_init */
-        0,        //(initproc)job_init,            /* tp_init */
-        0,                                     /* tp_alloc */
-        //PyType_GenericAlloc,
-        0,         //job_new,                       /* tp_new */
-        //PyType_GenericNew,
-    };
+{
+    PyObject_HEAD_INIT( &PyType_Type )
+    0,                                     /* ob_size */
+    "Job",                                 /* tp_name */
+    sizeof( job_Object ),                  /* tp_basicsize */
+    0,                                     /* tp_itemsize */
+    ( destructor ) job_dealloc,               /* tp_dealloc */
+    0,                                     /* tp_print */
+    0,                                     /* tp_getattr */
+    0,                                     /* tp_setattr */
+    0,                                     /* tp_compare */
+    0,                                     /* tp_repr */
+    0,                                     /* tp_as_number */
+    0,                                     /* tp_as_sequence */
+    0,                                     /* tp_as_mapping */
+    0,                                     /* tp_hash */
+    0,                                     /* tp_call */
+    0,                                     /* tp_str */
+    PyObject_GenericGetAttr,               /* tp_getattro */
+    PyObject_GenericSetAttr,               /* tp_setattro */
+    0,                                     /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,                    /* tp_flags */
+    "CUPS Job object",                     /* tp_doc */
+    0,                                     /* tp_traverse */
+    0,                                     /* tp_clear */
+    0,                                     /* tp_richcompare */
+    0,                                     /* tp_weaklistoffset */
+    0,                                     /* tp_iter */
+    0,                                     /* tp_iternext */
+    0,         /*job_methods, */                  /* tp_methods */
+    job_members,                           /* tp_members */
+    0,                                     /* tp_getset */
+    0,                                     /* tp_base */
+    0,                                     /* tp_dict */
+    0,                                     /* tp_descr_get */
+    0,                                     /* tp_descr_set */
+    0,                                     /* tp_dictoffset */
+    0,                                     /* tp_init */
+    0,        //(initproc)job_init,            /* tp_init */
+    0,                                     /* tp_alloc */
+    //PyType_GenericAlloc,
+    0,         //job_new,                       /* tp_new */
+    //PyType_GenericNew,
+};
 
 
 static /*job_Object **/ PyObject * _newJob( int id, int state, char * dest, char * title, char * user, int size )
@@ -1089,43 +1184,40 @@ PyObject * setServer( PyObject * self, PyObject * args )
 PyObject * getPPDList( PyObject * self, PyObject * args )
 {
 
-/*
-    * Build a CUPS_GET_PPDS request, which requires the following
-    * attributes:
-    *
-    *    attributes-charset
-    *    attributes-natural-language
-    *    printer-uri
-    */
+    /*
+        * Build a CUPS_GET_PPDS request, which requires the following
+        * attributes:
+        *
+        *    attributes-charset
+        *    attributes-natural-language
+        *    printer-uri
+        */
 
     ipp_t *request = NULL,                 /* IPP Request */
-          *response = NULL;                /* IPP Response */
+                     *response = NULL;                /* IPP Response */
     PyObject * result;
     cups_lang_t *language;
     ipp_attribute_t * attr;
-    //PyObject * ppd_list;
-    http_t *http = NULL;     /* HTTP object */
-    //char buf[1024];
 
     result = PyDict_New ();
 
-    if ( ( http = httpConnectEncrypt( cupsServer(), ippPort(), cupsEncryption() ) ) == NULL )
+    if (acquireCupsInstance () == NULL)
     {
         goto abort;
     }
 
     request = ippNew();
 
-    request->request.op.operation_id = CUPS_GET_PPDS;
-    request->request.op.request_id   = 1;
+    ippSetOperation( request, CUPS_GET_PPDS );
+    ippSetRequestId ( request, 1 );
 
     language = cupsLangDefault();
 
     ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_CHARSET,
-             "attributes-charset", NULL, cupsLangEncoding(language));
+                 "attributes-charset", NULL, cupsLangEncoding(language));
 
     ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_LANGUAGE,
-             "attributes-natural-language", NULL, language->language);
+                 "attributes-natural-language", NULL, language->language);
 
     //ippAddString(request, IPP_TAG_OPERATION, IPP_TAG_URI, "printer-uri",
     //             NULL, "ipp://localhost/printers/");
@@ -1143,43 +1235,43 @@ PyObject * getPPDList( PyObject * self, PyObject * args )
     if ((response = cupsDoRequest(http, request, "/")) != NULL)
     {
 
-        for (attr = response->attrs; attr; attr = attr->next)
+        for (attr = ippFirstAttribute( response ); attr; attr = ippNextAttribute( response ))
         {
             PyObject *dict;
             char *ppdname = NULL;
 
-            while (attr && attr->group_tag != IPP_TAG_PRINTER)
-                attr = attr->next;
+            while (attr && ippGetGroupTag( attr ) != IPP_TAG_PRINTER)
+                attr = ippNextAttribute( response );
 
             if (!attr)
                 break;
 
             dict = PyDict_New ();
 
-            for (; attr && attr->group_tag == IPP_TAG_PRINTER; attr = attr->next)
+            for (; attr && ippGetGroupTag( attr ) == IPP_TAG_PRINTER; attr = ippNextAttribute( response ))
             {
                 PyObject *val = NULL;
 
-                if (!strcmp (attr->name, "ppd-name") && attr->value_tag == IPP_TAG_NAME)
+                if (!strcmp (ippGetName( attr ), "ppd-name") && ippGetValueTag( attr ) == IPP_TAG_NAME)
                 {
-                    ppdname = attr->values[0].string.text;
+                    ppdname = ippGetString( attr, 0, NULL );
 
                     //sprintf( buf, "print '%s'", ppdname);
                     //PyRun_SimpleString( buf );
                 }
 
-                else if (attr->value_tag == IPP_TAG_TEXT || attr->value_tag == IPP_TAG_NAME || attr->value_tag == IPP_TAG_KEYWORD)
-                //else if ((!strcmp (attr->name, "ppd-natural-language") && attr->value_tag == IPP_TAG_LANGUAGE) ||
-                //    (!strcmp (attr->name, "ppd-make-and-model") && attr->value_tag == IPP_TAG_TEXT) ||
-                //    (!strcmp (attr->name, "ppd-make") && attr->value_tag == IPP_TAG_TEXT) ||
-                //    (!strcmp (attr->name, "ppd-device-id") && attr->value_tag == IPP_TAG_TEXT))
+                else if (ippGetValueTag( attr ) == IPP_TAG_TEXT || ippGetValueTag( attr ) == IPP_TAG_NAME || ippGetValueTag( attr ) == IPP_TAG_KEYWORD)
+                    //else if ((!strcmp (ippGetName( attr ), "ppd-natural-language") && ippGetValueTag( attr ) == IPP_TAG_LANGUAGE) ||
+                    //    (!strcmp (ippGetName( attr ), "ppd-make-and-model") && ippGetValueTag( attr ) == IPP_TAG_TEXT) ||
+                    //    (!strcmp (ippGetName( attr ), "ppd-make") && ippGetValueTag( attr ) == IPP_TAG_TEXT) ||
+                    //    (!strcmp (ippGetName( attr ), "ppd-device-id") && ippGetValueTag( attr ) == IPP_TAG_TEXT))
                 {
-                    val = PyObj_from_UTF8(attr->values[0].string.text);
+                    val = PyObj_from_UTF8(ippGetString( attr, 0, NULL ));
                 }
 
                 if (val)
                 {
-                    PyDict_SetItemString (dict, attr->name, val);
+                    PyDict_SetItemString (dict, ippGetName( attr ), val);
                     Py_DECREF (val);
                 }
             }
@@ -1201,9 +1293,6 @@ PyObject * getPPDList( PyObject * self, PyObject * args )
     }
 
 abort:
-    if ( http != NULL )
-        httpClose( http );
-
     if ( response != NULL )
         ippDelete( response );
 
@@ -1229,9 +1318,9 @@ PyObject * openPPD( PyObject * self, PyObject * args )
 
     if ( ( file = fopen( g_ppd_file, "r" )) == NULL )
     {
-      unlink(g_ppd_file);
-      g_ppd_file = NULL;
-      goto bailout;
+        unlink(g_ppd_file);
+        g_ppd_file = NULL;
+        goto bailout;
     }
 
     ppd = ppdOpen( file );
@@ -1328,31 +1417,31 @@ PyObject * getPPDOption( PyObject * self, PyObject * args )
 
 PyObject * findPPDAttribute( PyObject * self, PyObject * args )
 {
-	if ( ppd != NULL )
-	{
-		char * name;
-		char * spec;
+    if ( ppd != NULL )
+    {
+        char * name;
+        char * spec;
 
-		if ( !PyArg_ParseTuple( args, "zz", &name, &spec ) )
-		{
-			return Py_BuildValue( "" ); // None
-		}
-		
-		ppd_attr_t * ppd_attr;
-		ppd_attr = ppdFindAttr(ppd, name, spec );
-		if ( ppd_attr == NULL )
-		{
-			return Py_BuildValue( "" ); // None
-		}
-		else
-		{
-			return Py_BuildValue( "s", ppd_attr->value );
-		}
-	}
-	else
-	{
-		return Py_BuildValue( "" ); // None
-	}
+        if ( !PyArg_ParseTuple( args, "zz", &name, &spec ) )
+        {
+            return Py_BuildValue( "" ); // None
+        }
+
+        ppd_attr_t * ppd_attr;
+        ppd_attr = ppdFindAttr(ppd, name, spec );
+        if ( ppd_attr == NULL )
+        {
+            return Py_BuildValue( "" ); // None
+        }
+        else
+        {
+            return Py_BuildValue( "s", ppd_attr->value );
+        }
+    }
+    else
+    {
+        return Py_BuildValue( "" ); // None
+    }
 }
 
 PyObject * getPPDPageSize( PyObject * self, PyObject * args )
@@ -1386,7 +1475,7 @@ PyObject * getPPDPageSize( PyObject * self, PyObject * args )
         length = ppdPageLength( ppd, page_size->text );
 
         return Py_BuildValue( "(sffffff)", page_size->text, width, length, size->left,
-            size->bottom, size->right, size->top );
+                              size->bottom, size->right, size->top );
     }
 
 bailout:
@@ -1442,7 +1531,7 @@ PyObject * removeOption( PyObject * self, PyObject * args )
             if ( j < g_num_options )
             {
                 memcpy( (g_options + j), (g_options + j + 1),
-                    sizeof(cups_option_t) * (g_num_options - j) );
+                        sizeof(cups_option_t) * (g_num_options - j) );
 
                 r = 1;
             }
@@ -1478,16 +1567,16 @@ PyObject * getGroupList( PyObject * self, PyObject * args )
     ppd_group_t *group;
     int i;
 
-/*  debug("at 0"); */
+    /*  debug("at 0"); */
 
     if ( ppd != NULL && dest != NULL )
     {
-/*      debug("at 1"); */
+        /*      debug("at 1"); */
 
         group_list = PyList_New( ( Py_ssize_t ) 0 );
         for ( i = ppd->num_groups, group = ppd->groups; i > 0; i--, group++ )
         {
-/*          debug(group->name); */
+            /*          debug(group->name); */
             PyList_Append( group_list, PyObj_from_UTF8( group->name ) );
         }
 
@@ -1728,10 +1817,16 @@ PyObject * printFileWithOptions( PyObject * self, PyObject * args )
     cups_dest_t * dest = NULL;
     int num_dests = 0;
     int i = 0;
+    char *requesting_user_name = NULL;
 
     if ( !PyArg_ParseTuple( args, "zzz", &printer, &filename, &title ) )
     {
         return Py_BuildValue( "" ); // None
+    }
+    requesting_user_name = getUserName();
+    if(requesting_user_name)
+    {
+        cupsSetUser(requesting_user_name);
     }
 
     num_dests = cupsGetDests(&dests);
@@ -1768,30 +1863,33 @@ const char * password_callback(const char * prompt)
     char *username = NULL;
     char *password = NULL;
 
-    if (passwordFunc != NULL)  {
+    if (passwordFunc != NULL)
+    {
 
         if (passwordPrompt)
-	    prompt = passwordPrompt;
+            prompt = passwordPrompt;
 
         result = PyObject_CallFunction(passwordFunc, "s", prompt);
         if (!result)
-	    return "";
+            return "";
 
         usernameObj = PyTuple_GetItem(result, 0);
         if (!usernameObj)
             return "";
         username = PyString_AsString(usernameObj);
-/*      printf("usernameObj=%p, username='%s'\n", usernameObj, username); */
+        // printf("usernameObj=%p, username='%s'\n", usernameObj, username); 
         if (!username)
-	    return "";
+            return "";
+
+        auth_cancel_req = ('\0' == username[0])? 1 : 0 ;
 
         passwordObj = PyTuple_GetItem(result, 1);
         if (!passwordObj)
-	    return "";
+            return "";
         password = PyString_AsString(passwordObj);
-/*      printf("passwordObj=%p, password='%s'\n", passwordObj, password); */
+        // printf("passwrdObj=%p, passwrd='%s'\n", passwordObj, password); 
         if (!password)
-	    return "";
+            return "";
 
         cupsSetUser(username);
         return password;
@@ -1856,51 +1954,49 @@ PyObject * getPassword( PyObject * self, PyObject * args )
 
 
 
-
-
-
 // ***************************************************************************************************
 
 static PyMethodDef cupsext_methods[] =
-    {
-        { "getPrinters", ( PyCFunction ) getPrinters, METH_VARARGS },
-        { "addPrinter", ( PyCFunction ) addPrinter, METH_VARARGS },
-        { "delPrinter", ( PyCFunction ) delPrinter, METH_VARARGS },
-        { "getDefaultPrinter", ( PyCFunction ) getDefaultPrinter, METH_VARARGS },
-        { "setDefaultPrinter", ( PyCFunction ) setDefaultPrinter, METH_VARARGS },
-        { "controlPrinter", ( PyCFunction ) controlPrinter, METH_VARARGS },
-        { "getPPDList", ( PyCFunction ) getPPDList, METH_VARARGS },
-        { "getPPD", ( PyCFunction ) getPPD, METH_VARARGS },
-        { "openPPD", ( PyCFunction ) openPPD, METH_VARARGS },
-        { "closePPD", ( PyCFunction ) closePPD, METH_VARARGS },
-        { "getPPDOption", ( PyCFunction ) getPPDOption, METH_VARARGS },
-        { "getPPDPageSize", ( PyCFunction ) getPPDPageSize, METH_VARARGS },
-        { "getVersion", ( PyCFunction ) getVersion, METH_VARARGS },
-        { "getVersionTuple", ( PyCFunction ) getVersionTuple, METH_VARARGS },
-        { "cancelJob", ( PyCFunction ) cancelJob, METH_VARARGS },
-        { "getJobs", ( PyCFunction ) getJobs, METH_VARARGS },
-        { "getServer", ( PyCFunction ) getServer, METH_VARARGS },
-        { "setServer", ( PyCFunction ) setServer, METH_VARARGS },
-        { "addOption", ( PyCFunction ) addOption, METH_VARARGS },
-        { "removeOption", ( PyCFunction ) removeOption, METH_VARARGS },
-        { "resetOptions", ( PyCFunction ) resetOptions, METH_VARARGS },
-        { "printFileWithOptions", ( PyCFunction ) printFileWithOptions, METH_VARARGS },
-        { "Job", ( PyCFunction ) newJob, METH_VARARGS | METH_KEYWORDS },
-        { "Printer", ( PyCFunction ) newPrinter, METH_VARARGS | METH_KEYWORDS },
-        { "getGroupList", ( PyCFunction ) getGroupList, METH_VARARGS },
-        { "getGroup", ( PyCFunction ) getGroup, METH_VARARGS },
-        { "getOptionList", ( PyCFunction ) getOptionList, METH_VARARGS },
-        { "getOption", ( PyCFunction ) getOption, METH_VARARGS },
-        { "getChoiceList", ( PyCFunction ) getChoiceList, METH_VARARGS },
-        { "getChoice", ( PyCFunction ) getChoice, METH_VARARGS },
-        { "setOptions", ( PyCFunction ) setOptions, METH_VARARGS },
-        { "getOptions", ( PyCFunction ) getOptions, METH_VARARGS },
-        { "setPasswordPrompt", (PyCFunction) setPasswordPrompt, METH_VARARGS },
-        { "setPasswordCallback", ( PyCFunction ) setPasswordCallback, METH_VARARGS },
-        { "getPassword", ( PyCFunction ) getPassword, METH_VARARGS },
-		{ "findPPDAttribute", ( PyCFunction ) findPPDAttribute, METH_VARARGS },
-		{ NULL, NULL }
-    };
+{
+    { "getPrinters", ( PyCFunction ) getPrinters, METH_VARARGS },
+    { "addPrinter", ( PyCFunction ) addPrinter, METH_VARARGS },
+    { "delPrinter", ( PyCFunction ) delPrinter, METH_VARARGS },
+    { "getDefaultPrinter", ( PyCFunction ) getDefaultPrinter, METH_VARARGS },
+    { "setDefaultPrinter", ( PyCFunction ) setDefaultPrinter, METH_VARARGS },
+    { "controlPrinter", ( PyCFunction ) controlPrinter, METH_VARARGS },
+    { "getPPDList", ( PyCFunction ) getPPDList, METH_VARARGS },
+    { "getPPD", ( PyCFunction ) getPPD, METH_VARARGS },
+    { "openPPD", ( PyCFunction ) openPPD, METH_VARARGS },
+    { "closePPD", ( PyCFunction ) closePPD, METH_VARARGS },
+    { "getPPDOption", ( PyCFunction ) getPPDOption, METH_VARARGS },
+    { "getPPDPageSize", ( PyCFunction ) getPPDPageSize, METH_VARARGS },
+    { "getVersion", ( PyCFunction ) getVersion, METH_VARARGS },
+    { "getVersionTuple", ( PyCFunction ) getVersionTuple, METH_VARARGS },
+    { "cancelJob", ( PyCFunction ) cancelJob, METH_VARARGS },
+    { "getJobs", ( PyCFunction ) getJobs, METH_VARARGS },
+    { "getServer", ( PyCFunction ) getServer, METH_VARARGS },
+    { "setServer", ( PyCFunction ) setServer, METH_VARARGS },
+    { "addOption", ( PyCFunction ) addOption, METH_VARARGS },
+    { "removeOption", ( PyCFunction ) removeOption, METH_VARARGS },
+    { "resetOptions", ( PyCFunction ) resetOptions, METH_VARARGS },
+    { "printFileWithOptions", ( PyCFunction ) printFileWithOptions, METH_VARARGS },
+    { "Job", ( PyCFunction ) newJob, METH_VARARGS | METH_KEYWORDS },
+    { "Printer", ( PyCFunction ) newPrinter, METH_VARARGS | METH_KEYWORDS },
+    { "getGroupList", ( PyCFunction ) getGroupList, METH_VARARGS },
+    { "getGroup", ( PyCFunction ) getGroup, METH_VARARGS },
+    { "getOptionList", ( PyCFunction ) getOptionList, METH_VARARGS },
+    { "getOption", ( PyCFunction ) getOption, METH_VARARGS },
+    { "getChoiceList", ( PyCFunction ) getChoiceList, METH_VARARGS },
+    { "getChoice", ( PyCFunction ) getChoice, METH_VARARGS },
+    { "setOptions", ( PyCFunction ) setOptions, METH_VARARGS },
+    { "getOptions", ( PyCFunction ) getOptions, METH_VARARGS },
+    { "setPasswordPrompt", (PyCFunction) setPasswordPrompt, METH_VARARGS },
+    { "setPasswordCallback", ( PyCFunction ) setPasswordCallback, METH_VARARGS },
+    { "getPassword", ( PyCFunction ) getPassword, METH_VARARGS },
+    { "findPPDAttribute", ( PyCFunction ) findPPDAttribute, METH_VARARGS },
+    { "releaseCupsInstance", ( PyCFunction ) releaseCupsInstance, METH_VARARGS },
+    { NULL, NULL }
+};
 
 
 static char cupsext_documentation[] = "Python extension for CUPS 1.x";

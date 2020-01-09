@@ -213,6 +213,10 @@ enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) service_to_channel(mud
    {
       *index = HPMUD_LEDM_SCAN_CHANNEL;
    }
+   else if (strncasecmp(sn, "hp-marvell-ews", 11) == 0)
+     {
+       *index = HPMUD_MARVELL_EWS_CHANNEL;
+     }
    /* All the following services require MLC/1284.4. */
    else if (pd->io_mode == HPMUD_RAW_MODE || pd->io_mode == HPMUD_UNI_MODE)
    {
@@ -450,6 +454,8 @@ int hpmud_get_uri_datalink(const char *uri, char *buf, int buf_size)
       p+=7;
    else if ((p = strcasestr(uri, "ip=")) != NULL)
       p+=3;
+   else if ((p = strcasestr(uri, "hostname=")) != NULL)
+      p+=9;
    else if ((p = strcasestr(uri, "zc=")) != NULL)
    {
       p+=3;

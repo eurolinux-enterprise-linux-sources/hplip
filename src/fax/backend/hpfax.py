@@ -243,9 +243,12 @@ else:
     except IndexError:
         input_fd = 0
 
-    # REVISIT:
-    tmp_dir = '/tmp'
-    pipe_name = os.path.join(tmp_dir, "hpfax-pipe-%d" % job_id)
+    if os.path.exists("/home/%s/.hplip"%username):
+        tmp_dir = "/home/%s/.hplip"%username
+    else:
+        tmp_dir = "/tmp"
+
+    pipe_name = os.path.join(tmp_dir, "hp_fax-pipe-%d" % job_id)
 
     # Create the named pipe. Make sure it exists before sending
     # message to hppsd.

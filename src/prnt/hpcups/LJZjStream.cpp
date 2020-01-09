@@ -42,6 +42,7 @@
 #include "LJZjStream.h"
 #include "Utils.h"
 #include "hpjbig_wrapper.h"
+#include "utils.h"
 
 #define ZJC_BAND_HEIGHT    100
 
@@ -664,21 +665,23 @@ DRIVER_ERROR    LJZjStream::encapsulateColor (RASTERDATA *raster)
 
 DRIVER_ERROR LJZjStream::preProcessRasterData(cups_raster_t **ppcups_raster, cups_page_header2_t* firstpage_cups_header, char* pSwapedPagesFileName)
 {
-    int current_page_number = 0;
+	int current_page_number = 0;
 	int fdEven = -1;
 	int fdOdd = -1;
 	int fdSwaped = -1;
-    int loopcntr = 0; 
-    DRIVER_ERROR driver_error = NO_ERROR;
-    cups_page_header2_t    cups_header;
+	int loopcntr = 0; 
+	DRIVER_ERROR driver_error = NO_ERROR;
+	cups_page_header2_t    cups_header={0,};
 	cups_raster_t *swaped_pages_raster=NULL;
 	cups_raster_t *even_pages_raster=NULL;
 	cups_raster_t *odd_pages_raster = NULL;
 	BYTE* pPageDataBuffer = NULL;
-	char hpEvenPagesFile[] = "/tmp/hplipEvenPagesXXXXXX";
-	char hpOddPagesFile[] = "/tmp/hplipOddPagesXXXXXX";
-		
-	if (1 != m_pJA->pre_process_raster || !cups_header.Duplex){		                                  
+	char hpEvenPagesFile[MAX_FILE_PATH_LEN]={0,};
+	char hpOddPagesFile[MAX_FILE_PATH_LEN]={0,};
+	snprintf(hpEvenPagesFile, sizeof(hpEvenPagesFile), "%s/hp_%s_cups_EvenPagesXXXXXX",CUPS_TMP_DIR, m_pJA->user_name);
+	snprintf(hpOddPagesFile, sizeof(hpOddPagesFile), "%s/hp_%s_cups_OddPagesXXXXXX", CUPS_TMP_DIR, m_pJA->user_name);
+	
+	if (1 != m_pJA->pre_process_raster || !firstpage_cups_header->Duplex){		                                  
 		return  NO_ERROR;                                  
     }    
 
@@ -691,9 +694,9 @@ DRIVER_ERROR LJZjStream::preProcessRasterData(cups_raster_t **ppcups_raster, cup
 	fdOdd = mkstemp (hpOddPagesFile);
 	fdSwaped = mkstemp (pSwapedPagesFileName);
 	if (fdEven < 0 || fdOdd < 0 || fdSwaped < 0){
-		dbglog ("ERROR: Unable to open temp output files for writing\n");
-		driver_error = SYSTEM_ERROR;
-        goto bugout;
+			dbglog ("ERROR: Unable to open temp output files for writing\n");		
+			driver_error = SYSTEM_ERROR;
+			goto bugout;
 	}
 
 	even_pages_raster = cupsRasterOpen(fdEven, CUPS_RASTER_WRITE);

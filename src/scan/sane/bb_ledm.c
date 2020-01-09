@@ -34,6 +34,8 @@
 
 # define _BUG(args...) syslog(LOG_ERR, __FILE__ " " STRINGIZE(__LINE__) ": " args)
 
+//# define  BB_LEDM_DEBUG
+
 # ifdef BB_LEDM_DEBUG
    # define _DBG(args...) syslog(LOG_INFO, __FILE__ " " STRINGIZE(__LINE__) ": " args)
 # else
@@ -195,8 +197,8 @@ Keep-Alive: 20\r\nProxy-Connection: keep-alive\r\nCookie: AccessCounter=new\r\n0
 <GrayRendering>NTSC</GrayRendering>\
 <ToneMap>\
 <Gamma>0</Gamma>\
-<Brightness>1000</Brightness>\
-<Contrast>1000</Contrast>\
+<Brightness>%d</Brightness>\
+<Contrast>%d</Contrast>\
 <Highlite>0</Highlite>\
 <Shadow>0</Shadow></ToneMap>\
 <ContentType>Photo</ContentType></ScanSettings>" 
@@ -230,6 +232,7 @@ Keep-Alive: 300\r\nProxy-Connection: keep-alive\r\nCookie: AccessCounter=new\r\n
 # define JOBSTATE_PROCESSING "<j:JobState>Processing</j:JobState>"
 # define JOBSTATE_CANCELED "<j:JobState>Canceled</j:JobState>"
 # define JOBSTATE_COMPLETED "<j:JobState>Completed</j:JobState>"
+# define PRESCANPAGE "<PreScanPage>"
 
 static int parse_scan_elements(const char *payload, int size, struct wscn_scan_elements *elements)
 {
@@ -688,17 +691,26 @@ int bb_open(struct ledm_session *ps)
   ps->adf_tlyRange.max = SANE_FIX(pbb->elements.config.adf.maximum_size.height/11.811023);
   ps->adf_bryRange.max = ps->adf_tlyRange.max;
 
-  i = pbb->elements.config.platen.platen_resolution_list[0] + 1;
-  while(i--)
+  if (pbb->elements.config.platen.flatbed_supported)
   {
-  _DBG("bb_open platen_resolution_list = %d\n",  pbb->elements.config.platen.platen_resolution_list[i]);
-    ps->platen_resolutionList[i] = pbb->elements.config.platen.platen_resolution_list[i];
-    ps->resolutionList[i] = pbb->elements.config.platen.platen_resolution_list[i];
+      i = pbb->elements.config.platen.platen_resolution_list[0] + 1;
+      while(i--)
+      {
+          _DBG("bb_open platen_resolution_list = %d\n",  pbb->elements.config.platen.platen_resolution_list[i]);
+          ps->platen_resolutionList[i] = pbb->elements.config.platen.platen_resolution_list[i];
+          ps->resolutionList[i] = pbb->elements.config.platen.platen_resolution_list[i];
+      }
   }
-
-  i = pbb->elements.config.adf.adf_resolution_list[0] + 1;
-  while(i--) ps->adf_resolutionList[i] = pbb->elements.config.adf.adf_resolution_list[i]; 
-
+  if (pbb->elements.config.adf.supported)
+  {
+     i = pbb->elements.config.adf.adf_resolution_list[0] + 1;
+     while(i--)
+     {
+         _DBG("bb_open adf_resolution_list = %d\n", pbb->elements.config.adf.adf_resolution_list[i]);
+         ps->adf_resolutionList[i] = pbb->elements.config.adf.adf_resolution_list[i]; 
+         ps->resolutionList[i] = pbb->elements.config.adf.adf_resolution_list[i];
+     }
+  }
   stat = 0;
 
 bugout:
@@ -707,9 +719,11 @@ bugout:
 
 int bb_close(struct ledm_session *ps)
 {
-  _DBG("bb_close()\n");
-  free(ps->bb_session);
-  ps->bb_session = NULL;
+  if (ps->bb_session)
+  {
+      free(ps->bb_session);
+      ps->bb_session = NULL;
+  }
   return 0;
 } 
 
@@ -780,6 +794,17 @@ int bb_get_parameters(struct ledm_session *ps, SANE_Parameters *pp, int option)
 return 0;
 }
 
+/***
+* Function: bb_is_paper_in_adf()
+* Arguments: 
+*    1) struct ledm_session *ps (IN)
+*
+* Return Value: (type: Int)
+*    0  = no paper in adf,
+*    1  = paper in adf,
+*    -1 = error
+*/
+
 int bb_is_paper_in_adf(struct ledm_session *ps) /* 0 = no paper in adf, 1 = paper in adf, -1 = error */
 {
   char buf[1024];
@@ -797,10 +822,17 @@ int bb_is_paper_in_adf(struct ledm_session *ps) /* 0 = no paper in adf, 1 = pape
 
   http_close(pbb->http_handle);   /* error, close http connection */
   pbb->http_handle = 0;
-  _DBG("bb_is_paper_in_adf .job_id=%d buf=%s\n", ps->job_id, buf);
+  _DBG("bb_is_paper_in_adf .job_id=%d page_id=%d buf=%s \n", ps->job_id, ps->page_id, buf );
   if(strstr(buf, ADF_LOADED)) return 1;
-  if(strstr(buf, ADF_EMPTY) && strstr(buf, SCANNER_BUSY_WITH_SCAN_JOB)) return 2;
-  else return 0;
+  if(strstr(buf, ADF_EMPTY))
+  {
+     if (strstr(buf, SCANNER_BUSY_WITH_SCAN_JOB)) return 1;
+     if (ps->currentInputSource ==IS_ADF_DUPLEX && ps->page_id % 2 == 1)
+        return 1;
+     else  
+        return 0;
+  }
+  else return -1;
 }
 
 
@@ -808,7 +840,7 @@ SANE_Status bb_start_scan(struct ledm_session *ps)
 {
   char buf[4096] = {0};
   char buf1[1024]={0};
-  int len, bytes_read;
+  int len, bytes_read, paper_status;
   int i, timeout = 10 ;
   char szPage_ID[5] = {0};
   char szJob_ID[5] = {0};
@@ -845,18 +877,20 @@ SANE_Status bb_start_scan(struct ledm_session *ps)
     }
 
     len = snprintf(buf, sizeof(buf), CREATE_SCAN_JOB_REQUEST,
-  		ps->currentResolution,//<XResolution>
-  		ps->currentResolution,//<YResolution>
-    	(int) (ps->currentTlx / 5548.7133),//<XStart>
-    	(int) ((ps->currentBrx / 5548.7133) - (ps->currentTlx / 5548.7133)),//<Width>
-    	(int) (ps->currentTly / 5548.7133),//<YStart>
-    	(int) ((ps->currentBry / 5548.7133) - (ps->currentTly / 5548.7133)),//<Height>
-    	"Jpeg",//<Format>
-    	(! strcmp(ce_element[ps->currentScanMode], "Color8")) ? "Color" : (! strcmp(ce_element[ps->currentScanMode], "Gray8")) ? "Gray" : "Gray",//<ColorSpace>
-    	((! strcmp(ce_element[ps->currentScanMode], "Color8")) || (! strcmp(ce_element[ps->currentScanMode], "Gray8"))) ? 8: 8,//<BitDepth>
-    	ps->currentInputSource == IS_PLATEN ? is_element[1] : is_element[2],//<InputSource>
-    	ps->currentInputSource == IS_PLATEN ? is_element[1] : is_element[2],//<InputSourceType>
-    	ps->currentInputSource != IS_ADF_DUPLEX ? "" : "<AdfOptions><AdfOption>Duplex</AdfOption></AdfOptions>");
+        ps->currentResolution,//<XResolution>
+        ps->currentResolution,//<YResolution>
+        (int) (ps->currentTlx / 5548.7133),//<XStart>
+        (int) ((ps->currentBrx / 5548.7133) - (ps->currentTlx / 5548.7133)),//<Width>
+        (int) (ps->currentTly / 5548.7133),//<YStart>
+        (int) ((ps->currentBry / 5548.7133) - (ps->currentTly / 5548.7133)),//<Height>
+        "Jpeg",//<Format>
+        (! strcmp(ce_element[ps->currentScanMode], "Color8")) ? "Color" : (! strcmp(ce_element[ps->currentScanMode], "Gray8")) ? "Gray" : "Gray",//<ColorSpace>
+        ((! strcmp(ce_element[ps->currentScanMode], "Color8")) || (! strcmp(ce_element[ps->currentScanMode], "Gray8"))) ? 8: 8,//<BitDepth>
+        ps->currentInputSource == IS_PLATEN ? is_element[1] : is_element[2],//<InputSource>
+        ps->currentInputSource == IS_PLATEN ? is_element[1] : is_element[2],//<InputSourceType>
+        ps->currentInputSource != IS_ADF_DUPLEX ? "" : "<AdfOptions><AdfOption>Duplex</AdfOption></AdfOptions>",
+        (int)ps->currentBrightness,//<Brightness>
+        (int)ps->currentContrast);//<Contrast>
 
     len = len + strlen(ZERO_FOOTER);
 
@@ -944,6 +978,12 @@ SANE_Status bb_start_scan(struct ledm_session *ps)
         //goto bugout
         _DBG("bb_start_scan() read_http_payload FAILED len=%d buf=%s\n", len, buf);
         break;
+     }
+      //For a new scan, buf must contain <PreScanPage>. 
+     if (NULL == strstr(buf,PRESCANPAGE)) 
+     {         //i.e Paper is not present in Scanner
+         stat = SANE_STATUS_NO_DOCS;
+       	goto bugout;
      }
      if (strstr(buf,JOBSTATE_CANCELED) || strstr(buf, CANCELED_BY_DEVICE) || strstr(buf, CANCELED_BY_CLIENT))
      {

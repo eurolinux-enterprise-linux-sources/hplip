@@ -21,6 +21,7 @@
 
 # StdLib
 import operator
+import signal
 
 # Local
 from base.g import *
@@ -105,6 +106,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.connect(self.CancelButton, SIGNAL("clicked()"), self.CancelButton_clicked)
         self.connect(self.BackButton, SIGNAL("clicked()"), self.BackButton_clicked)
         self.connect(self.NextButton, SIGNAL("clicked()"), self.NextButton_clicked)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         self.initIntroPage()
         self.initDevicesPage()
@@ -157,7 +159,17 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
                 log.info("Searching on USB bus...")
                 filter_dict = {'wifi-config' : (operator.gt, WIFI_CONFIG_NONE)}
 
+                try:
+                    from base import smart_install
+                except ImportError:
+                    log.error("Failed to Import smart_install.py from base")
+                else:
+                    endWaitCursor()
+                    smart_install.disable(GUI_MODE, 'qt4')
+                    beginWaitCursor()
+
                 self.devices = device.probeDevices([self.bus], 0, 0, filter_dict, self.search)
+
         finally:
             endWaitCursor()
 
@@ -255,17 +267,12 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.num_networks = 0
 
         try:
-            self.adaptor_id, self.adapterName, state, presence = self.wifiObj.getWifiAdaptorID(self.dev)           
+            adaptor_list = self.wifiObj.getWifiAdaptorID(self.dev)           
         except Error, e:
             self.showIOError(e)
             return
-
-        log.debug("Adaptor ID: %s" % self.adaptor_id)
-        log.debug("Adaptor name: %s" % self.adapterName)
-        log.debug("Adaptor state: %s" % state)
-        log.debug("Adaptor presence: %s" % presence)
-
-        if self.adaptor_id == -1:
+        
+        if len(adaptor_list) == 0: 
             FailureUI(self, self.__tr("<b>Unable to locate wireless hardware on device.</b>"))
             if self.dev is not None:
                 self.dev.close()
@@ -274,10 +281,19 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
 
         log.debug("Turning on wireless radio...")
         try:            
-            self.wifiObj.setAdaptorPower(self.dev, self.adapterName, self.adaptor_id)
+            self.adaptor_id, self.adapterName, state, presence =  self.wifiObj.setAdaptorPower(self.dev, adaptor_list )
         except Error, e:
             self.showIOError(e)
             return
+        if self.adaptor_id == -1:
+            FailureUI(self, self.__tr("<b>Unable to turn on wireless adaptor.</b>"))
+            if self.dev is not None:
+                self.dev.close()
+
+        log.debug("Adaptor ID: %s" % self.adaptor_id)
+        log.debug("Adaptor name: %s" % self.adapterName)
+        log.debug("Adaptor state: %s" % state)
+        log.debug("Adaptor presence: %s" % presence)
 
         self.performScan()
         self.setNextButton(BUTTON_NEXT)
@@ -305,7 +321,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
             self.dev.close()
             endWaitCursor()
 
-        self.num_networks = self.networks['numberofscanentries']
+        self.num_networks = self.networks.get('numberofscanentries')
         self.clearNetworksTable()
 
         if self.num_networks:
@@ -575,12 +591,16 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
             self.RefreshTimer.start(REFRESH_INTERVAL * 1000)
 
         elif self.success == SUCCESS_AUTO_IP:
-            self.pages.append((self.__tr("Your printer has been connected to the wireless network, but it has been assigned an address which may not be usable."), load_pixmap('warning', '16x16')))
-            self.RefreshTimer.start(REFRESH_INTERVAL * 1000)
+#            self.pages.append((self.__tr("Your printer has been connected to the wireless network, but it has been assigned an address which may not be usable."), load_pixmap('warning', '16x16')))
+            self.pages.append((self.__tr("Your printer has been connected to the wireless network and has been assinged a IP. Now run <pre>hp-setup %1</pre>  If IP is not accessible, try again for another IP.").arg(QString(self.ip)), load_pixmap('warning', '16x16')))
+       #     self.RefreshTimer.start(REFRESH_INTERVAL * 1000)
+            self.CancelButton.setEnabled(False)
+            self.BackButton.setEnabled(False)
+            self.RefreshTimer.stop()
 
         else: # SUCCESS_CONNECTED
             if self.standalone:
-                self.pages.append((self.__tr("Your printer has been successfully configured on the wireless network. You may now unplug the USB cable. To setup the printer, now run <pre>hp-setup.</pre>"), load_pixmap('info', '16x16')))
+                self.pages.append((self.__tr("Your printer has been successfully configured on the wireless network. You may now unplug the USB cable. To setup the printer, now run <pre>hp-setup %s</pre>"%self.ip), load_pixmap('info', '16x16')))
             else:
                 self.pages.append((self.__tr("Your printer has been successfully configured on the wireless network. You may now unplug the USB cable."), load_pixmap('info', '16x16')))
             self.CancelButton.setEnabled(False)
@@ -606,20 +626,21 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.SignalStrengthIcon.setPixmap(load_pixmap('signal%d' % ss_val, 'other'))
 
         for c, s in vsa_codes:
-            ss = s.lower()
-            if ss.startswith("info"):
-                pixmap = load_pixmap('info', '16x16')
+            if c :
+                ss = s.lower()
+                if ss.startswith("info"):
+                    pixmap = load_pixmap('info', '16x16')
 
-            elif ss.startswith("warn"):
-                pixmap = load_pixmap('warning', '16x16')
+                elif ss.startswith("warn"):
+                    pixmap = load_pixmap('warning', '16x16')
 
-            elif ss.startswith("crit"):
-                pixmap = load_pixmap('error', '16x16')
+                elif ss.startswith("crit"):
+                    pixmap = load_pixmap('error', '16x16')
 
-            else:
-                pixmap = load_pixmap('info', '16x16')
+                else:
+                    pixmap = load_pixmap('info', '16x16')
 
-            self.pages.append((device.queryString("vsa_%s" % str(c).zfill(3)), pixmap))
+                self.pages.append((device.queryString("vsa_%s" % str(c).zfill(3)), pixmap))
 
         num_pages = len(self.pages)
         self.PageSpinBox.setMaximum(num_pages)

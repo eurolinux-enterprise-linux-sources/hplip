@@ -22,7 +22,7 @@
 # StdLib
 import socket
 import operator
-import commands
+import signal
 
 # Local
 from base.g import *
@@ -30,8 +30,7 @@ from base import device, utils, models, pkit
 from prnt import cups
 from base.codes import *
 from ui_utils import *
-#from installer import core_install
-from installer.core_install import CoreInstall
+from installer import pluginhandler
 
 # Qt
 from PyQt4.QtCore import *
@@ -138,6 +137,13 @@ class PasswordDialog(QDialog):
         return qApp.translate("SetupDialog",s,c)
 
 
+def FailureMessageUI(prompt):
+    try:	
+        dlg = PasswordDialog(prompt, None)
+        FailureUI(dlg, prompt)
+    finally:
+        pass
+
 
 def showPasswordUI(prompt, userName=None, allowUsernameEdit=True):
     try:	
@@ -182,6 +188,7 @@ class SetupDialog(QDialog, Ui_Dialog):
             QTimer.singleShot(0, self.showRemovePage)
         else:
             if self.skip_discovery:
+                self.discovery_method = 0 # SLP
                 QTimer.singleShot(0, self.showDevicesPage)
             else:
                 QTimer.singleShot(0, self.showDiscoveryPage)
@@ -201,6 +208,7 @@ class SetupDialog(QDialog, Ui_Dialog):
         self.connect(self.BackButton, SIGNAL("clicked()"), self.BackButton_clicked)
         self.connect(self.NextButton, SIGNAL("clicked()"), self.NextButton_clicked)
         self.connect(self.ManualGroupBox,  SIGNAL("clicked(bool)"),  self.ManualGroupBox_clicked)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         if self.remove:
             self.initRemovePage()
@@ -334,8 +342,10 @@ class SetupDialog(QDialog, Ui_Dialog):
 
             name = host
             if bus == 'net':
-                try:
-                    name = socket.gethostbyaddr(host)[0]
+                try:                                        
+                    if device.ip_pat.search(name) is not None:
+                        log.debug("Getting host name from IP address (%s)" % name)
+                        name = socket.gethostbyaddr(host)[0]
                 except (socket.herror, socket.gaierror):
                     pass
 
@@ -413,7 +423,7 @@ class SetupDialog(QDialog, Ui_Dialog):
     def setNetworkDiscovery(self, enabled):
         self.NetworkDiscoveryMethodLabel.setEnabled(enabled)
         self.NetworkDiscoveryMethodComboBox.setEnabled(enabled)
-        self.NetworkDiscoveryMethodComboBox.setCurrentIndex(1)
+        self.NetworkDiscoveryMethodComboBox.setCurrentIndex(0)
 
 
     def UsbRadioButton_toggled(self, radio_enabled):
@@ -517,8 +527,10 @@ class SetupDialog(QDialog, Ui_Dialog):
                     if self.bus == 'net':
                         if self.discovery_method == 0:
                             net_search_type = "slp"
-                        else:
+                        elif self.discovery_method == 1:
                             net_search_type = "mdns"
+                        else:
+                            net_search_type = "avahi"
 
                         log.info("Searching... (bus=%s, timeout=%d, ttl=%d, search=%s desc=%d, method=%s)" %
                                  (self.bus,  self.timeout, self.ttl, self.search or "(None)",
@@ -536,8 +548,19 @@ class SetupDialog(QDialog, Ui_Dialog):
                     else: # DEVICE_DESC_ALL
                         filter_dict = {}
 
+                    if self.bus == 'usb':
+                        try:
+                            from base import smart_install
+                        except ImportError:
+                            log.error("Failed to Import smart_install.py from base")
+                        else:   #if no Smart Install device found, ignores.
+                            QApplication.restoreOverrideCursor()
+                            smart_install.disable(GUI_MODE, 'qt4')
+                            QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+
                     self.devices = device.probeDevices([self.bus], self.timeout, self.ttl,
                                                        filter_dict, self.search, net_search=net_search_type)
+
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -594,6 +617,8 @@ class SetupDialog(QDialog, Ui_Dialog):
             self.DevicesTableWidget.setItem(row, device_uri_col, i)
 
             if self.bus == 'net':
+                #if device.ip_pat.search(host) is None:
+                     #host = socket.gethostbyname(host)
                 i = QTableWidgetItem(QString(host))
                 i.setFlags(flags)
                 self.DevicesTableWidget.setItem(row, 1, i)
@@ -651,17 +676,17 @@ class SetupDialog(QDialog, Ui_Dialog):
 
     def showAddPrinterPage(self):
         # Install the plugin if needed...
-        core = CoreInstall()
+        pluginObj = pluginhandler.PluginHandle()
         plugin = self.mq.get('plugin', PLUGIN_NONE)
         plugin_reason = self.mq.get('plugin-reason', PLUGIN_REASON_NONE)
         if plugin > PLUGIN_NONE:
 
-            if core.check_for_plugin() != PLUGIN_INSTALLED:
+            if pluginObj.getStatus() != pluginhandler.PLUGIN_INSTALLED:
                 ok, sudo_ok = pkit.run_plugin_command(plugin == PLUGIN_REQUIRED, plugin_reason)
                 if not sudo_ok:
                     FailureUI(self, self.__tr("<b>Unable to find an appropriate su/sudo utiltity to run hp-plugin.</b><p>Install kdesu, gnomesu, or gksu.</p>"))
                     return
-                if not ok or core.check_for_plugin() != PLUGIN_INSTALLED:
+                if not ok or pluginObj.getStatus() != pluginhandler.PLUGIN_INSTALLED:
                     if plugin == PLUGIN_REQUIRED:
                         FailureUI(self, self.__tr("<b>The printer you are trying to setup requires a binary driver plug-in and it failed to install.</b><p>Please check your internet connection and try again.</p><p>Visit <u>http://hplipopensource.com</u> for more infomation.</p>"))
                         return
@@ -670,8 +695,7 @@ class SetupDialog(QDialog, Ui_Dialog):
 
         self.setNextButton(BUTTON_ADD_PRINTER)
 
-        if not self.printer_name:
-            self.setDefaultPrinterName()
+        self.setDefaultPrinterName()
 
         self.findPrinterPPD()
 
@@ -682,8 +706,7 @@ class SetupDialog(QDialog, Ui_Dialog):
             self.SetupFaxGroupBox.setChecked(True)
             self.SetupFaxGroupBox.setEnabled(True)
 
-            if not self.fax_name:
-                self.setDefaultFaxName()
+            self.setDefaultFaxName()
 
             self.findFaxPPD()
 
@@ -739,17 +762,7 @@ class SetupDialog(QDialog, Ui_Dialog):
         try:
             self.print_ppd = None
             self.ppds = cups.getSystemPPDs()
-            
-            #Check if common ppd name is already given in models.dat(This is needed because in case of devices having more than one derivatives
-            #will have diffrent model name strings in device ID, because of which we don't get the common ppd name for search)
-
-            ppd_name = self.mq.get('ppd-name',0)
-    
-            if ppd_name == 0:    #Means ppd-name is not provided So follow earlier path of getting name from device ID.
-            	model = cups.stripModel2(self.model)
-            	self.print_ppd = cups.getPPDFile2(model, self.ppds)
-            else:
-            	self.print_ppd = cups.getPPDFile2(ppd_name, self.ppds)
+            self.print_ppd = cups.getPPDFile2(self.mq, self.model, self.ppds)
             
         finally:
             QApplication.restoreOverrideCursor()
@@ -758,58 +771,17 @@ class SetupDialog(QDialog, Ui_Dialog):
     def findFaxPPD(self):
         QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
         try:
-            log.debug("Searching for fax PPD for model %s" % self.model)
-
-            if prop.hpcups_build:
-                if self.mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_MARVELL:
-                    fax_ppd_name = "HP-Fax3-hpcups" # Fixed width (2528 pixels) and 300dpi rendering
-                    nick = "HP Fax3 hpcups"
-                elif self.mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_SOAP or self.mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_LEDMSOAP:
-                    fax_ppd_name = "HP-Fax2-hpcups" # Fixed width (2528 pixels) and 300dpi rendering
-                    nick = "HP Fax2 hpcups"
-                elif self.mq.get('fax-type', FAX_TYPE_LEDM) == FAX_TYPE_LEDM:
-                    fax_ppd_name = "HP-Fax4-hpcups"# Fixed width (2528 pixels) and 300dpi rendering
-                    nick = "HP Fax4 hpcups"
-                else:
-                    fax_ppd_name = "HP-Fax-hpcups" # Standard
-                    nick = "HP Fax hpcups"
-
-            else: # hpijs
-                if self.mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_MARVELL:
-                    fax_ppd_name = "HP-Fax3-hpijs" # Fixed width (2528 pixels) and 300dpi rendering
-                    nick = "HP Fax3 hpijs"
-                if self.mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_SOAP or self.mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_LEDMSOAP:
-                    fax_ppd_name = "HP-Fax2-hpijs" # Fixed width (2528 pixels) and 300dpi rendering
-                    nick = "HP Fax2 hpijs"
-                if self.mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_LEDM:
-                    fax_ppd_name = "HP-Fax4-hpijs" # Fixed width (2528 pixels) and 300dpi rendering
-                    nick = "HP Fax4 hpijs"
-                else:
-                    fax_ppd_name = "HP-Fax-hpijs" # Standard
-                    nick = "HP Fax hpijs"
-
-            ppds = []
-
-            for f in utils.walkFiles(sys_conf.get('dirs', 'ppd'), pattern="HP-Fax*.ppd*", abs_paths=True):
-                ppds.append(f)
-
-            for f in ppds:
-                if f.find(fax_ppd_name) >= 0 and cups.getPPDDescription(f) == nick:
-                    self.fax_ppd = f
-                    self.fax_setup_ok = True
-                    log.debug("Found fax PPD: %s" % f)
-                    break
+            self.fax_ppd, fax_ppd_name, nick = cups.getFaxPPDFile(self.mq, self.model)
+            if self.fax_ppd:
+                self.fax_setup_ok = True
             else:
-                self.fax_ppd = None
                 self.fax_setup_ok = False
                 FailureUI(self, self.__tr("<b>Unable to locate the HPLIP Fax PPD file:</b><p>%1.ppd.gz</p><p>Fax setup has been disabled.").arg(fax_ppd_name))
                 self.fax_setup = False
                 self.SetupFaxGroupBox.setChecked(False)
                 self.SetupFaxGroupBox.setEnabled(False)
-
         finally:
             QApplication.restoreOverrideCursor()
-
 
 
     def setDefaultPrinterName(self):
@@ -967,17 +939,38 @@ class SetupDialog(QDialog, Ui_Dialog):
     #
 
     def addPrinter(self):
-        self.setupPrinter()
+        print_sts = self.setupPrinter()
+        if print_sts == cups.IPP_FORBIDDEN or print_sts == cups.IPP_NOT_AUTHENTICATED or print_sts == cups.IPP_NOT_AUTHORIZED:
+            pass  # User doesn't have sufficient permissions so ignored.
+        else:
+            if self.fax_setup:
+                if self.setupFax() == cups.IPP_OK:
+                    self.readwriteFaxInformation(False)
 
-        if self.fax_setup:
-            self.setupFax()
-            self.readwriteFaxInformation(False)
+            if print_sts == cups.IPP_OK:
+                self.flashFirmware()
 
-        if self.print_test_page:
-            self.printTestPage()
+                if self.print_test_page:
+                    self.printTestPage()
 
         self.close()
 
+
+    #
+    # Updating firmware download for supported devices.
+    #
+    def flashFirmware(self):
+        if self.mq.get('fw-download', False):
+            try:
+                d = device.Device(self.device_uri)
+            except Error , e:
+                FailureUI(self, self.__tr("<b>Error opening device. Firmware download is Failed.</b><p>%s (%s)." % (e.msg, e.opt)))
+            else:
+                if d.downloadFirmware():
+                    log.info("Firmware download successful.\n")
+                else:
+                    FailureUI(self, self.__tr("<b>Firmware download is Failed.</b>"))
+                d.close()
 
 
     #
@@ -985,40 +978,33 @@ class SetupDialog(QDialog, Ui_Dialog):
     #
 
     def setupPrinter(self):
+        status = cups.IPP_BAD_REQUEST
         QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
         try:
-            cups.setPasswordPrompt("You do not have permission to add a printer.")
             if not os.path.exists(self.print_ppd[0]): # assume foomatic: or some such
-                status, status_str = cups.addPrinter(self.printer_name.encode('utf8'), self.device_uri,
-                    self.print_location, '', self.print_ppd[0], self.print_desc)
+                add_prnt_args = (self.printer_name.encode('utf8'), self.device_uri, self.print_location, '', self.print_ppd[0], self.print_desc)
             else:
-                status, status_str = cups.addPrinter(self.printer_name.encode('utf8'), self.device_uri,
-                    self.print_location, self.print_ppd[0], '', self.print_desc)
+                add_prnt_args = (self.printer_name.encode('utf8'), self.device_uri, self.print_location, self.print_ppd[0], '', self.print_desc)
 
-            log.debug("addPrinter() returned (%d, %s)" % (status, status_str))
-            self.installed_print_devices = device.getSupportedCUPSDevices(['hp'])
+            status, status_str = cups.cups_operation(cups.addPrinter, GUI_MODE, 'qt4', self, *add_prnt_args)
+            log.debug(device.getSupportedCUPSDevices(['hp']))
 
-            log.debug(self.installed_print_devices)
-
-            if self.device_uri not in self.installed_print_devices or \
-                self.printer_name not in self.installed_print_devices[self.device_uri]:
-
+            if status != cups.IPP_OK:
                 QApplication.restoreOverrideCursor()
-                if os.geteuid!=0 and utils.addgroup()!=[]:
-                    FailureUI(self, self.__tr("<b>Printer queue setup failed. Could not connect to CUPS Server</b><p>Is user added to %s group(s)" %utils.list_to_string(utils.addgroup())))
+                FailureUI(self, self.__tr("<b>Printer queue setup failed.</b> <p>Error : %s"%status_str))
             else:
-                # TODO:
-                #service.sendEvent(self.hpssd_sock, EVENT_CUPS_QUEUES_CHANGED, device_uri=self.device_uri)
-                pass
+                # sending Event to add this device in hp-systray
+                utils.sendEvent(EVENT_CUPS_QUEUES_ADDED,self.device_uri, self.printer_name)
 
         finally:
             QApplication.restoreOverrideCursor()
+        return status
 
 
     def setupFax(self):
+        status = cups.IPP_BAD_REQUEST
         QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
         try:
-            cups.setPasswordPrompt("You do not have permission to add a fax device.")
             if not os.path.exists(self.fax_ppd):
                 status, status_str = cups.addPrinter(self.fax_name.encode('utf8'),
                     self.fax_uri, self.fax_location, '', self.fax_ppd,  self.fax_desc)
@@ -1026,23 +1012,19 @@ class SetupDialog(QDialog, Ui_Dialog):
                 status, status_str = cups.addPrinter(self.fax_name.encode('utf8'),
                     self.fax_uri, self.fax_location, self.fax_ppd, '', self.fax_desc)
 
-            log.debug("addPrinter() returned (%d, %s)" % (status, status_str))
-            self.installed_fax_devices = device.getSupportedCUPSDevices(['hpfax'])
+            log.debug(device.getSupportedCUPSDevices(['hpfax']))
 
-            log.debug(self.installed_fax_devices)
-
-            if self.fax_uri not in self.installed_fax_devices or \
-                self.fax_name not in self.installed_fax_devices[self.fax_uri]:
-
+            if status != cups.IPP_OK:
                 QApplication.restoreOverrideCursor()
-                FailureUI(self, self.__tr("<b>Fax queue setup failed.</b><p>Please restart CUPS and try again."))
+                FailureUI(self, self.__tr("<b>Fax queue setup failed.</b><p>Error : %s"%status_str))
             else:
-                pass
-                # TODO:
-                #service.sendEvent(self.hpssd_sock, EVENT_CUPS_QUEUES_CHANGED, device_uri=self.fax_uri)
-
+                 # sending Event to add this device in hp-systray
+                utils.sendEvent(EVENT_CUPS_QUEUES_ADDED,self.fax_uri, self.fax_name)
+                
         finally:
             QApplication.restoreOverrideCursor()
+
+        return status
 
 
     def readwriteFaxInformation(self, read=True):
@@ -1259,10 +1241,10 @@ class SetupDialog(QDialog, Ui_Dialog):
             self.print_desc = unicode(self.PrinterDescriptionLineEdit.text()).encode('utf8')
             self.print_location = unicode(self.PrinterLocationLineEdit.text()).encode('utf8')
             self.fax_setup = self.SetupFaxGroupBox.isChecked()
-            self.fax_desc = unicode(self.FaxDescriptionLineEdit.text()).encode('utf8')
-            self.fax_location = unicode(self.FaxLocationLineEdit.text()).encode('utf8')
-            self.fax_name_company = unicode(self.NameCompanyLineEdit.text()).encode('utf8')
-            self.fax_number = unicode(self.FaxNumberLineEdit.text()).encode('utf8')
+            self.fax_desc = unicode(self.FaxDescriptionLineEdit.text())
+            self.fax_location = unicode(self.FaxLocationLineEdit.text())
+            self.fax_name_company = unicode(self.NameCompanyLineEdit.text())
+            self.fax_number = unicode(self.FaxNumberLineEdit.text())
             self.addPrinter()
 
         elif p == PAGE_REMOVE:
@@ -1271,9 +1253,18 @@ class SetupDialog(QDialog, Ui_Dialog):
                 if widget.checkState() == Qt.Checked:
                     item = self.RemoveDevicesTableWidget.item(row, 1)
                     printer = unicode(item.data(Qt.UserRole).toString()).encode('utf-8')
+                    uri = device.getDeviceURIByPrinterName(printer)
                     log.debug("Removing printer: %s" % printer)
-                    if cups.delPrinter(printer) == 0 and os.geteuid!=0 and utils.addgroup()!=[]:
-                            FailureUI(self, self.__tr("<b>Unable to delete printer queue. Could not connect to CUPS Server</b><p>Is user added to %s group(s)" %utils.list_to_string(utils.addgroup())))
+                    status, status_str = cups.cups_operation(cups.delPrinter, GUI_MODE, 'qt4', self, printer)
+
+                    if  status != cups.IPP_OK:
+                        FailureUI(self, self.__tr("<b>Unable to delete '%s' queue. </b><p>Error : %s"%(printer,status_str)))
+                        if status == cups.IPP_FORBIDDEN or status == cups.IPP_NOT_AUTHENTICATED or status == cups.IPP_NOT_AUTHORIZED:
+                            break
+                    else:
+                        # sending Event to add this device in hp-systray
+                        utils.sendEvent(EVENT_CUPS_QUEUES_REMOVED, uri, printer)
+
             self.close()
 
         else:

@@ -27,7 +27,7 @@ import os
 import signal
 import os.path
 import time
-
+import signal
 
 # Local
 from base.g import *
@@ -75,6 +75,7 @@ BLIP_DELAY = 2000
 SET_MENU_DELAY = 1000
 MAX_MENU_EVENTS = 10
 UPGRADE_CHECK_DELAY=24*60*60*1000 		#1 day
+CLEAN_EXEC_DELAY=4*60*60*1000 		#4 Hrs
 
 ERROR_STATE_TO_ICON = {
     ERROR_STATE_CLEAR:        QSystemTrayIcon.Information,
@@ -335,6 +336,7 @@ class SystemTrayApp(QApplication):
         notifier = QSocketNotifier(self.read_pipe, QSocketNotifier.Read)
         QObject.connect(notifier, SIGNAL("activated(int)"), self.notifierActivated)
         QObject.connect(self.tray_icon, SIGNAL("activated(QSystemTrayIcon::ActivationReason)"), self.trayActivated)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
         self.tray_icon.show()
 
         if self.user_settings.systray_visible == SYSTRAY_VISIBLE_SHOW_ALWAYS:
@@ -345,12 +347,22 @@ class SystemTrayApp(QApplication):
         self.tray_icon.setIcon(self.prop_active_icon)
         self.active_icon = True
 
-        self.handle_hplip_updation()
+        if "--ignore-update-firsttime" not in args:
+            self.handle_hplip_updation()
+
         QTimer.singleShot(SET_MENU_DELAY, self.initDone)
 
-        self.timer = QTimer()
-        self.timer.connect(self.timer,SIGNAL("timeout()"),self.handle_hplip_updation)
-        self.timer.start(UPGRADE_CHECK_DELAY)
+        self.update_timer = QTimer()
+        self.update_timer.connect(self.update_timer,SIGNAL("timeout()"),self.handle_hplip_updation)
+        self.update_timer.start(UPGRADE_CHECK_DELAY)
+
+        # Cleans the /var/log/hp/tmp directory
+        #self.handle_hplip_clean()
+        
+        #self.clean_timer = QTimer()
+        #self.clean_timer.connect(self.clean_timer,SIGNAL("timeout()"),self.handle_hplip_clean)
+        #self.clean_timer.start(CLEAN_EXEC_DELAY)
+        
 
 
 
@@ -360,6 +372,8 @@ class SystemTrayApp(QApplication):
 
         self.setMenu()
 
+    def resetDevice(self):
+        devices.clear()
 
     def addDevice(self, device_uri):
         try:
@@ -369,6 +383,12 @@ class SystemTrayApp(QApplication):
         else:
             devices[device_uri].needs_update = True
 
+    def handle_hplip_clean(self):
+        log.debug("handle_hplip_clean ")
+        home_dir = sys_conf.get('dirs', 'home')
+        cmd = 'sh %s/hplip_clean.sh'%home_dir
+        os.system(cmd)
+        
 
     def handle_hplip_updation(self):
         log.debug("handle_hplip_updation upgrade_notify =%d"%(self.user_settings.upgrade_notify))
@@ -380,6 +400,11 @@ class SystemTrayApp(QApplication):
                 log.debug("Running hp-upgrade: %s " % (path))
                 # this just updates the available version in conf file. But won't notify
                 os.spawnlp(os.P_NOWAIT, path, 'hp-upgrade', '--check')
+                time.sleep(5)
+                try:
+                    os.waitpid(0, os.WNOHANG)
+                except OSError:
+                    pass
             return
             
             
@@ -391,12 +416,16 @@ class SystemTrayApp(QApplication):
                 path = os.path.join(path, 'hp-upgrade')
                 log.debug("Running hp-upgrade: %s " % (path))
                 os.spawnlp(os.P_NOWAIT, path, 'hp-upgrade', '--notify')
-                
+                time.sleep(5)
             else:
                 log.error("Unable to find hp-upgrade --notify on PATH.")
         else:
             log.debug("upgrade schedule time is not yet completed. schedule time =%d current time =%d " %(self.user_settings.upgrade_pending_update_time, current_time))
         
+        try:
+            os.waitpid(0, os.WNOHANG)
+        except OSError:
+            pass
 
 
 
@@ -437,7 +466,7 @@ class SystemTrayApp(QApplication):
                     try:
                         self.service = self.session_bus.get_object('com.hplip.StatusService',
                                                                   "/com/hplip/StatusService")
-                    except DBusException:
+                    except dbus.DBusException:
                         log.warn("Unable to connect to StatusService. Retrying...")
 
                     t += 1
@@ -629,6 +658,13 @@ class SystemTrayApp(QApplication):
                     event = device.Event(*struct.unpack(self.fmt, m[:self.fmt_size]))
 
                     m = m[self.fmt_size:]
+                    
+                    if event.event_code == EVENT_CUPS_QUEUES_REMOVED or event.event_code == EVENT_CUPS_QUEUES_ADDED:
+                        self.resetDevice()
+                        for d in device.getSupportedCUPSDevices(back_end_filter=['hp', 'hpfax']):
+                            self.addDevice(d)
+                            
+                        self.setMenu()
 
                     if event.event_code == EVENT_USER_CONFIGURATION_CHANGED:
                         log.debug("Re-reading configuration (EVENT_USER_CONFIGURATION_CHANGED)")
@@ -668,9 +704,12 @@ class SystemTrayApp(QApplication):
                         log.debug("Waiting to hide...")
                         QTimer.singleShot(HIDE_INACTIVE_DELAY, self.timeoutHideWhenInactive)
 
-                    if event.event_code <= EVENT_MAX_USER_EVENT:
-                        self.addDevice(event.device_uri)
-                        self.setMenu()
+                    if event.event_code <= EVENT_MAX_USER_EVENT or \
+                        event.event_code == EVENT_CUPS_QUEUES_REMOVED or event.event_code == EVENT_CUPS_QUEUES_ADDED:
+
+                        if event.event_code != EVENT_CUPS_QUEUES_REMOVED:
+                            self.addDevice(event.device_uri)
+                            self.setMenu()
 
                         if self.tray_icon.supportsMessages():
 
@@ -743,7 +782,10 @@ class SystemTrayApp(QApplication):
                                     else:
                                         n.set_timeout(TRAY_MESSAGE_DELAY)
 
-                                    n.show()
+                                    try:
+                                        n.show()
+                                    except:
+                                        log.error("Failed to show notification!")
 
                                 else: # Use "standard" message bubbles
                                     icon = ERROR_STATE_TO_ICON.get(error_state, QSystemTrayIcon.Information)
@@ -784,7 +826,13 @@ def run(read_pipe):
     log.set_module("hp-systray(qt4)")
     log.debug("PID=%d" % os.getpid())
 
-    app = SystemTrayApp(sys.argv, read_pipe)
+    try:
+        app = SystemTrayApp(sys.argv, read_pipe)
+    except dbus.DBusException, e:
+        # No session bus
+        log.debug("Caught exception: %s" % e)
+        sys.exit(1)
+
     app.setQuitOnLastWindowClosed(False) # If not set, settings dlg closes app
 
     i = 0

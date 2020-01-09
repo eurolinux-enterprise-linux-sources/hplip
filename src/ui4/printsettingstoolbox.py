@@ -413,7 +413,7 @@ class PrintSettingsToolbox(QToolBox):
                     current = current_options.get('outputorder', 'normal')
 
                     self.addControlRow("outputorder",
-                        self.__tr("Output Order (Print last page first)"),
+                        self.__tr("Output Order"),
                         cups.PPD_UI_PICKONE, current,
                         [('normal', self.__tr('Normal (Print first page first)')),
                          ('reverse', self.__tr('Reversed (Print last page first)'))], 'normal')
@@ -460,7 +460,7 @@ class PrintSettingsToolbox(QToolBox):
 
                     self.beginControlGroup(g, QString(text))
 
-                    log.debug("  Text: %s" % unicode(text))
+                    log.debug("  Text: %s" % repr(text))
                     log.debug("Num subgroups: %d" % num_subgroups)
 
                     options = cups.getOptionList(g)
@@ -794,7 +794,7 @@ class PrintSettingsToolbox(QToolBox):
                     log.debug("End adding Group: Summary")
                    
 
-                self.job_storage_enable = self.cur_device.mq.get('job-storage', JOB_STORAGE_DISABLE) == JOB_STORAGE_ENABLE
+                self.job_storage_enable = 0 #self.cur_device.mq.get('job-storage', JOB_STORAGE_DISABLE) == JOB_STORAGE_ENABLE
 
 
                 if self.job_storage_enable:
@@ -933,6 +933,17 @@ class PrintSettingsToolbox(QToolBox):
             OffRadioButton.setText(self.__tr("Off"))
 
             DefaultButton.setText("Default")
+
+            #type of 'value' and 'default' can be unicode (ppd values), str, int or boolean, so we need to typecast it to bool for easy comparison
+            if value == True or value == 'True' or value == 'true':
+               value = True;
+            else:
+               value = False;
+
+            if default == True or default == 'True' or default == 'true':
+               default = True;
+            else:
+               default = False;
 
             if value == default:
                 DefaultButton.setEnabled(False)
@@ -1582,6 +1593,10 @@ class PrintSettingsToolbox(QToolBox):
     def BoolRadioButtons_clicked(self, b): # cups.PPD_UI_BOOLEAN
         sender = self.sender()
         b = int(b)
+        if sender.default == True or sender.default == "True" or sender.default == "true":
+            sender.default = int(True)
+        else:
+            sender.default = int(False)
 
         if b == sender.default:
             self.removePrinterOption(sender.option)
@@ -1621,6 +1636,10 @@ class PrintSettingsToolbox(QToolBox):
         sender.setEnabled(False)
 
         if sender.typ == cups.PPD_UI_BOOLEAN: # () On  (*) Off
+            if sender.default == True or sender.default == 'True' or sender.default == 'true': 
+                sender.default = True
+            else:
+                sender.default = False
             if sender.default:
                 sender.control[0].setChecked(True)
                 sender.control[0].setFocus(Qt.OtherFocusReason)

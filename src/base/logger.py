@@ -162,6 +162,10 @@ class Logger(object):
         self._where = where
 
 
+    def get_where(self):
+        return self._where
+
+
     def get_level(self):
         return self._level
 
@@ -292,7 +296,7 @@ class Logger(object):
 
     def warn(self, message):
         if self._level <= Logger.LOG_LEVEL_WARN:
-            txt = "warning: %s" % message.encode('utf-8')
+            txt = "warning: %s" % message
             self.log(self.color(txt, 'fuscia'), Logger.LOG_LEVEL_WARN)
 
             syslog.syslog(syslog.LOG_WARNING, "%s[%d]: %s" % (self.module, self.pid, txt))
@@ -318,7 +322,7 @@ class Logger(object):
 
     def error(self, message):
         if self._level <= Logger.LOG_LEVEL_ERROR:
-            txt = "error: %s" % message.encode("utf-8")
+            txt = "error: %s" % message
             self.log(self.color(txt, 'red'), Logger.LOG_LEVEL_ERROR)
 
             syslog.syslog(syslog.LOG_ALERT, "%s[%d]: %s" % (self.module, self.pid, txt))
@@ -330,7 +334,7 @@ class Logger(object):
 
     def fatal(self, message):
         if self._level <= Logger.LOG_LEVEL_FATAL:
-            txt = "fatal error: :%s" % self.module.encode('utf-8')
+            txt = "fatal error: :%s" % self
             self.log(self.color(txt, 'red'), Logger.LOG_LEVEL_DEBUG)
 
             syslog.syslog(syslog.LOG_ALERT, "%s[%d]: %s" % (self.module, self.pid, txt))

@@ -22,16 +22,19 @@
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   
-  Author: David Suffield, Yashwant Sahu  
+  Author: David Suffield, Yashwant Sahu, Sarbeswar Meher  
 
 \************************************************************************************/
 
 #ifndef _MARVELLI_H
 #define _MARVELLI_H
 
-#define MARVELL_CONTRAST_MIN -127
-#define MARVELL_CONTRAST_MAX 127
-#define MARVELL_CONTRAST_DEFAULT 0
+#define MARVELL_CONTRAST_MIN 1
+#define MARVELL_CONTRAST_MAX 11
+#define MARVELL_CONTRAST_DEFAULT 6
+#define MARVELL_BRIGHTNESS_MIN 0
+#define MARVELL_BRIGHTNESS_MAX 200
+#define MARVELL_BRIGHTNESS_DEFAULT 6
 
 #define MM_PER_INCH     25.4
 
@@ -44,6 +47,7 @@ enum MARVELL_OPTION_NUMBER
                    MARVELL_OPTION_INPUT_SOURCE,     /* platen, ADF */ 
    MARVELL_OPTION_GROUP_ADVANCED,
                    MARVELL_OPTION_CONTRAST,
+                   MARVELL_OPTION_BRIGHTNESS,
    MARVELL_OPTION_GROUP_GEOMETRY,
                    MARVELL_OPTION_TL_X,
                    MARVELL_OPTION_TL_Y,
@@ -102,13 +106,18 @@ struct marvell_session
 
    SANE_Range contrast_range;
    SANE_Int current_contrast;
+   SANE_Range brightnessRange;
+   SANE_Int currentBrightness;
 
    SANE_Range tlxRange, tlyRange, brxRange, bryRange;
    SANE_Fixed currentTlx, currentTly, currentBrx, currentBry;
    SANE_Fixed effectiveTlx, effectiveTly, effectiveBrx, effectiveBry;
    SANE_Fixed min_width, min_height;
 
-   IP_HANDLE ip_handle;
+    SANE_Int platen_resolution_list[MAX_LIST_SIZE];
+    SANE_Int adf_resolution_list[MAX_LIST_SIZE];
+
+    IP_HANDLE ip_handle;
 
    int cnt;                   /* number bytes available in buf[] */ 
    unsigned char buf[32768];  /* line buffer (max = 1200dpi * 8.5inches * 3pixels) */

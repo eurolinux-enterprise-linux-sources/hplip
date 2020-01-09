@@ -49,6 +49,7 @@ $pyexecdir=@pyexecdir@
 $icondir=@icondir@
 $systraydir=@systraydir@
 $docdir=@hpdocdir@
+$htmldir=@hphtmldir@
 $version=@VERSION@
 $internal_tag=@PACKAGE_BUGREPORT@
 
@@ -80,7 +81,7 @@ $print_only_exclude=@epm_print_only_exclude@
 %endif
 %if hpcups-install
 f 0755 root root $cupsfilter/hpcups hpcups
-f 0755 root root $cupsfilter/hpps hpps
+f 0755 root root $cupsfilter/hpps prnt/filters/hpps
 %endif
 f 0644 root root /etc/hp/hplip.conf hplip.conf
 f 0644 root root /etc/cups/pstotiff.convs fax/filters/pstotiff.convs
@@ -250,6 +251,7 @@ f 0644 root root $ppd/HP prnt/ps/*.ppd.gz
 @epm_full@f 644 root root $home/installer/__init__.py installer/__init__.py
 @epm_full@f 644 root root $home/installer/dcheck.py installer/dcheck.py
 @epm_full@f 644 root root $home/installer/core_install.py installer/core_install.py
+@epm_full@f 644 root root $home/installer/pluginhandler.py installer/pluginhandler.py
 @epm_full@f 755 root root $home/uninstall.py uninstall.py
 @epm_full@f 755 root root $home/upgrade.py upgrade.py
 @epm_full@f 755 root root $home/colorcal.py colorcal.py
@@ -261,6 +263,8 @@ f 0644 root root $ppd/HP prnt/ps/*.ppd.gz
 @epm_full@f 644 root root $home/prnt/colorcal.py prnt/colorcal.py
 @epm_full@f 755 root root $home/clean.py clean.py
 @epm_full@f 755 root root $home/check.py check.py
+@epm_full@f 755 root root $home/doctor.py doctor.py
+@epm_full@f 755 root root $home/logcapture.py logcapture.py
 @epm_full@d 775 root root $home/pcard -
 @epm_full@f 644 root root $home/pcard/__init__.py pcard/__init__.py
 @epm_full@f 644 root root $home/pcard/photocard.py pcard/photocard.py
@@ -269,13 +273,14 @@ f 0644 root root $ppd/HP prnt/ps/*.ppd.gz
 @epm_full@f 755 root root $home/devicesettings.py devicesettings.py
 @epm_full@f 755 root root $home/config_usb_printer.py config_usb_printer.py
 @epm_full@f 755 root root $home/diagnose_queues.py diagnose_queues.py
+@epm_full@f 755 root root $home/hplip_clean.sh hplip_clean.sh
 
 # docs
-@epm_full@f 644 root root $docdir doc/*
-@epm_full@d 775 root root $docdir/images -
-@epm_full@f 644 root root $docdir/images doc/images/*
-@epm_full@d 775 root root $docdir/styles -
-@epm_full@f 644 root root $docdir/styles doc/styles/*
+@epm_full@f 644 root root $htmldir doc/*
+@epm_full@d 775 root root $htmldir/images -
+@epm_full@f 644 root root $htmldir/images doc/images/*
+@epm_full@d 775 root root $htmldir/styles -
+@epm_full@f 644 root root $htmldir/styles doc/styles/*
 # python commands
 @epm_full@l 755 root root $bindir/hp-toolbox ../share/hplip/toolbox.py
 @epm_full@l 755 root root $bindir/hp-colorcal ../share/hplip/colorcal.py
@@ -295,9 +300,10 @@ f 0644 root root $ppd/HP prnt/ps/*.ppd.gz
 @epm_full@l 755 root root $bindir/hp-probe ../share/hplip/probe.py
 @epm_full@l 755 root root $bindir/hp-timedate ../share/hplip/timedate.py
 @epm_full@l 755 root root $bindir/hp-plugin ../share/hplip/plugin.py
-@epm_full@l 755 root root $bindir/hp-check-plugin ../share/hplip/check-plugin.py
 @epm_full@l 755 root root $bindir/hp-diagnose_plugin ../share/hplip/diagnose_plugin.py
 @epm_full@l 755 root root $bindir/hp-check ../share/hplip/check.py
+@epm_full@l 755 root root $bindir/hp-doctor ../share/hplip/doctor.py
+@epm_full@l 755 root root $bindir/hp-logcapture ../share/hplip/logcapture.py
 @epm_full@l 755 root root $bindir/hp-info ../share/hplip/info.py
 @epm_full@l 755 root root $bindir/hp-makecopies ../share/hplip/makecopies.py
 @epm_full@l 755 root root $bindir/hp-scan ../share/hplip/scan.py
@@ -322,12 +328,11 @@ f 0644 root root $ppd/HP prnt/ps/*.ppd.gz
 
 %if !SUSE9
 @epm_print_only_exclude@f 0700 root root $cupsbackend/hp .libs/hp
-@epm_print_only_exclude@f 0755 root root $bindir/hp-mkuri .libs/hp-mkuri
 %endif
 
 # Use LINPUS8 for Acer Aspire One
 %if LINPUS8 RHEL5
-@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d/55-hpmud_pam.rules data/rules/55-hpmud_pam.rules
+@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d/56-hpmud_sysfs.rules data/rules/56-hpmud_sysfs.rules
 %endif
 
 %if RHEL3
@@ -345,7 +350,7 @@ l 0644 root root /usr/share/cups/model/foomatic-ppds $ppd/HP
 
 %system !darwin
 %if !LINPUS8 !RHEL3 !UBUNTU804 !SUSE9 !RHEL5
-@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d/55-hpmud.rules data/rules/55-hpmud.rules
+@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d/56-hpmud.rules data/rules/56-hpmud.rules
 @epm_print_only_exclude@f 0644 root root /usr/share/hal/fdi/preprobe/10osvendor/20-hplip-devices.fdi data/rules/20-hplip-devices.fdi
 %endif
 %system all
@@ -383,7 +388,7 @@ EOF
 @epm_full@%replaces hplip-data
 @epm_full@f 0644 root root /usr/share/hal/fdi/preprobe/10osvendor/20-hplip-devices.fdi data/rules/20-hplip-devices.fdi
 @epm_full@%postinstall <<EOF
-@epm_full@install -m 644 data/rules/55-hpmud.rules /etc/udev/rules.d
+@epm_full@install -m 644 data/rules/56-hpmud.rules /etc/udev/rules.d
 @epm_full@EOF
 %endif
 
@@ -394,7 +399,7 @@ EOF
 @epm_lite@%replaces hplip-data
 @epm_lite@f 0644 root root /usr/share/hal/fdi/preprobe/10osvendor/20-hplip-devices.fdi data/rules/20-hplip-devices.fdi
 @epm_lite@%postinstall <<EOF
-@epm_lite@install -m 644 data/rules/55-hpmud.rules /etc/udev/rules.d
+@epm_lite@install -m 644 data/rules/56-hpmud.rules /etc/udev/rules.d
 @epm_lite@EOF
 %endif
 
@@ -417,7 +422,7 @@ EOF
 @epm_full@%replaces hplip-data
 @epm_full@%replaces hplip-gui
 @epm_full@%postinstall <<EOF
-@epm_full@sed -i -e s/GROUP=\"lp\"/GROUP=\"scanner\"/ /etc/udev/rules.d/55-hpmud.rules
+@epm_full@sed -i -e s/GROUP=\"lp\"/GROUP=\"scanner\"/ /etc/udev/rules.d/56-hpmud.rules
 @epm_full@EOF
 %endif
 
@@ -437,7 +442,7 @@ EOF
 @epm_lite@%replaces hplip
 @epm_lite@%replaces hplip-data
 @epm_lite@%postinstall <<EOF
-@epm_lite@sed -i -e s/GROUP=\"lp\"/GROUP=\"scanner\"/ /etc/udev/rules.d/55-hpmud.rules
+@epm_lite@sed -i -e s/GROUP=\"lp\"/GROUP=\"scanner\"/ /etc/udev/rules.d/56-hpmud.rules
 @epm_lite@EOF
 %endif
 
@@ -448,17 +453,17 @@ f 0644 root root $docdir/copyright prnt/plugins/copyright
 d 0755 root root /var/lib/hp/ -
 f 0644 root root $home/data/firmware data/firmware/*.fw.gz
 d 0775 root root $home/data/plugin -
-d 0775 root lp /var/log/hp -
 
 #scan
 
 @epm_print_only_exclude@f 0644 root root $home/data/models/models.dat data/models/models.dat
 
 %system !darwin
-@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d data/rules/86-hpmud*.rules
-@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d data/rules/56-hpmud_add_printer.rules
+
 f 0755 root root $home/prnt/plugins/lj-${machine}.so prnt/plugins/lj-${machine}.so
 l 0755 root root $home/prnt/plugins/lj.so lj-${machine}.so
+f 0755 root root $home/prnt/plugins/hbpl1-${machine}.so prnt/plugins/hbpl1-${machine}.so
+l 0755 root root $home/prnt/plugins/hbpl1.so hbpl1-${machine}.so
 @epm_print_only_exclude@d 0775 root root $home/scan/plugins -
 @epm_print_only_exclude@f 0755 root root $home/scan/plugins/bb_marvell-${machine}.so scan/sane/bb_marvell-${machine}.so
 @epm_print_only_exclude@l 0755 root root $home/scan/plugins/bb_marvell.so bb_marvell-${machine}.so
@@ -483,11 +488,9 @@ EOF
 f 0644 root root $docdir/COPYING COPYING
 f 0644 root root $docdir/copyright copyright
 d 0755 root root /var/lib/hp/ -
-d 0775 root lp /var/log/hp -
+
 %system !darwin
-@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d/56-hpmud_support.rules data/rules/56-hpmud_support.rules
-@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d/86-hpmud_plugin.rules data/rules/86-hpmud_plugin.rules
-@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d/56-hpmud_add_printer.rules data/rules/56-hpmud_add_printer.rules
+@epm_print_only_exclude@f 0644 root root /etc/udev/rules.d/56-hpmud.rules data/rules/56-hpmud.rules
 
 %system all
 %endif

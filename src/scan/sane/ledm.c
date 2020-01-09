@@ -53,7 +53,7 @@ static struct ledm_session *session = NULL;
 static int set_extents(struct ledm_session *ps)
 {
   int stat = 0;
-
+    
   if ((ps->currentBrx > ps->currentTlx) && (ps->currentBrx - ps->currentTlx >= ps->min_width) && (ps->currentBrx - ps->currentTlx <= ps->tlxRange.max))
   {
     ps->effectiveTlx = ps->currentTlx;
@@ -206,6 +206,14 @@ static int set_input_source_side_effects(struct ledm_session *ps, enum INPUT_SOU
          break;
    }
 
+    if ((ps->adf_bryRange.max != ps->platen_bryRange.max) || (ps->adf_brxRange.max !=  ps->platen_brxRange.max))
+    {
+        ps->currentTly = ps->tlyRange.min;
+        ps->currentBrx = ps->brxRange.max;
+        ps->currentTlx = ps->tlxRange.min;
+        ps->currentBry = ps->bryRange.max;
+    }
+    
    return 0;
 } /* set_input_source_side_effects */
 
@@ -258,6 +266,19 @@ static int init_options(struct ledm_session *ps)
   ps->option[LEDM_OPTION_GROUP_ADVANCED].title = STR_TITLE_ADVANCED;
   ps->option[LEDM_OPTION_GROUP_ADVANCED].type = SANE_TYPE_GROUP;
   ps->option[LEDM_OPTION_GROUP_ADVANCED].cap = SANE_CAP_ADVANCED;
+
+  ps->option[LEDM_OPTION_BRIGHTNESS].name = SANE_NAME_BRIGHTNESS;
+  ps->option[LEDM_OPTION_BRIGHTNESS].title = SANE_TITLE_BRIGHTNESS;
+  ps->option[LEDM_OPTION_BRIGHTNESS].desc = SANE_DESC_BRIGHTNESS;
+  ps->option[LEDM_OPTION_BRIGHTNESS].type = SANE_TYPE_INT;
+  ps->option[LEDM_OPTION_BRIGHTNESS].unit = SANE_UNIT_NONE;
+  ps->option[LEDM_OPTION_BRIGHTNESS].size = sizeof(SANE_Int);
+  ps->option[LEDM_OPTION_BRIGHTNESS].cap = SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT | SANE_CAP_ADVANCED;
+  ps->option[LEDM_OPTION_BRIGHTNESS].constraint_type = SANE_CONSTRAINT_RANGE;
+  ps->option[LEDM_OPTION_BRIGHTNESS].constraint.range = &ps->brightnessRange;
+  ps->brightnessRange.min = LEDM_BRIGHTNESS_MIN;
+  ps->brightnessRange.max = LEDM_BRIGHTNESS_MAX;
+  ps->brightnessRange.quant = 0;
 
   ps->option[LEDM_OPTION_CONTRAST].name = SANE_NAME_CONTRAST;
   ps->option[LEDM_OPTION_CONTRAST].title = SANE_TITLE_CONTRAST;
@@ -398,6 +419,9 @@ SANE_Status __attribute__ ((visibility ("hidden"))) ledm_open(SANE_String_Const 
   /* Set supported contrast. */
   ledm_control_option(session, LEDM_OPTION_CONTRAST, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
 
+  /* Set supported brightness. */
+  ledm_control_option(session, LEDM_OPTION_BRIGHTNESS, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
+
   /* Set supported compression. (Note, cm1017 may say it supports MMR, but it doesn't) */
   ledm_control_option(session, LEDM_OPTION_COMPRESSION, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
 
@@ -420,6 +444,7 @@ bugout:
    {
       if (session)
       {
+         bb_close(session);
          if (session->cd > 0)
             hpmud_close_channel(session->dd, session->cd);
          if (session->dd > 0)
@@ -488,7 +513,7 @@ SANE_Status ledm_control_option(SANE_Handle handle, SANE_Int option, SANE_Action
       }
       else
       {  /* Set default. */
-        ps->currentScanMode = CE_COLOR8;
+        ps->currentScanMode = ps->scanModeMap[0];
         set_scan_mode_side_effects(ps, ps->currentScanMode);
         stat = SANE_STATUS_GOOD;
       }
@@ -525,15 +550,23 @@ SANE_Status ledm_control_option(SANE_Handle handle, SANE_Int option, SANE_Action
                  while(i--) session->resolutionList[i] = session->adf_resolutionList[i];
                }
                ps->currentResolution = session->resolutionList[1];
-               mset_result |= SANE_INFO_RELOAD_PARAMS | SANE_INFO_RELOAD_OPTIONS;
-               stat = SANE_STATUS_GOOD;
                break;
              }
            }
+           /*For some devices resolution varies, when we change 'source' in Xsane.
+           Hence need to update the resolution  */
+           if (i>1) /*Number of sources > 1*/
+           {
+             if(session->platen_resolutionList[1] != session->adf_resolutionList[1])
+                 ps->currentResolution = session->resolutionList[1];
+           }
+           mset_result |= SANE_INFO_RELOAD_PARAMS | SANE_INFO_RELOAD_OPTIONS;
+           stat = SANE_STATUS_GOOD;
+           break;
          }
          else
          {  /* Set default. */
-           ps->currentInputSource = IS_PLATEN;
+           ps->currentInputSource = ps->inputSourceMap[0];
            set_input_source_side_effects(ps, ps->currentInputSource);
            mset_result |= SANE_INFO_RELOAD_PARAMS | SANE_INFO_RELOAD_OPTIONS;
            stat = SANE_STATUS_GOOD;
@@ -552,11 +585,16 @@ SANE_Status ledm_control_option(SANE_Handle handle, SANE_Int option, SANE_Action
                if (ps->resolutionList[i] == *int_value)
                {
                   ps->currentResolution = *int_value;
-	          if(ps->currentResolution == 4800) SendScanEvent(ps->uri, EVENT_SIZE_WARNING);
+                  if(ps->currentResolution == 4800) SendScanEvent(ps->uri, EVENT_SIZE_WARNING);
                   mset_result |= SANE_INFO_RELOAD_PARAMS;
                   stat = SANE_STATUS_GOOD;
                   break;
                }
+            }
+            if (stat != SANE_STATUS_GOOD)
+            {
+                ps->currentResolution = ps->resolutionList[1];
+                stat = SANE_STATUS_GOOD;
             }
          }
          else
@@ -576,13 +614,41 @@ SANE_Status ledm_control_option(SANE_Handle handle, SANE_Int option, SANE_Action
             if (*int_value >= LEDM_CONTRAST_MIN && *int_value <= LEDM_CONTRAST_MAX)
             {
                ps->currentContrast = *int_value;
-               stat = SANE_STATUS_GOOD;
-               break;
             }
+            else
+            {
+              ps->currentContrast = LEDM_CONTRAST_DEFAULT;
+            }
+            mset_result |= SANE_INFO_RELOAD_PARAMS;
+            stat = SANE_STATUS_GOOD;
          }
          else
          {  /* Set default. */
             ps->currentContrast = LEDM_CONTRAST_DEFAULT;
+            stat = SANE_STATUS_GOOD;
+         }
+         break;
+      case LEDM_OPTION_BRIGHTNESS:
+         if (action == SANE_ACTION_GET_VALUE)
+         {
+            *int_value = ps->currentBrightness;
+            stat = SANE_STATUS_GOOD;
+         }
+         else if (action == SANE_ACTION_SET_VALUE)
+         {
+            if (*int_value >= LEDM_BRIGHTNESS_MIN && *int_value <= LEDM_BRIGHTNESS_MAX)
+            {
+               ps->currentBrightness = *int_value;
+            }
+            else
+            {
+              ps->currentBrightness = LEDM_BRIGHTNESS_DEFAULT;
+            }
+            stat = SANE_STATUS_GOOD;
+         }
+         else
+         {  /* Set default. */
+            ps->currentBrightness = LEDM_BRIGHTNESS_DEFAULT;
             stat = SANE_STATUS_GOOD;
          }
          break;

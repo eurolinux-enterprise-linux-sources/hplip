@@ -50,6 +50,7 @@
 #include "soapht.h"
 #include "soaphti.h"
 #include "io.h"
+#include "utils.h"
 
 #define DEBUG_DECLARE_ONLY
 #include "sanei_debug.h"
@@ -58,77 +59,52 @@ static struct soap_session *session = NULL;   /* assume one sane_open per proces
 
 static int bb_load(struct soap_session *ps, const char *so)
 {
-   char home[128];
-   char sz[255]; 
    int stat=1;
 
    /* Load hpmud manually with symbols exported. Otherwise the plugin will not find it. */ 
-   if ((ps->hpmud_handle = dlopen("libhpmud.so.0", RTLD_LAZY|RTLD_GLOBAL)) == NULL)
+   if ((ps->hpmud_handle = load_library("libhpmud.so.0")) == NULL)
    {
-      BUG("unable to load restricted library: %s\n", dlerror());
-      goto bugout;
-   } 
+	   if ((ps->hpmud_handle = load_library("libhpmud.so.0")) == NULL)
+           goto bugout;
+   }
 
    /* Load math library manually with symbols exported (Ubuntu 8.04). Otherwise the plugin will not find it. */ 
-   if ((ps->math_handle = dlopen("libm.so", RTLD_LAZY|RTLD_GLOBAL)) == NULL)
+   if ((ps->math_handle = load_library("libm.so")) == NULL)
    {
-      if ((ps->math_handle = dlopen("libm.so.6", RTLD_LAZY|RTLD_GLOBAL)) == NULL)
-      {
-         BUG("unable to load restricted library: %s\n", dlerror());
+      if ((ps->math_handle = load_library("libm.so.6")) == NULL)
          goto bugout;
-      }
    } 
 
-   if (hpmud_get_conf("[dirs]", "home", home, sizeof(home)) != HPMUD_R_OK)
-      goto bugout;
-   snprintf(sz, sizeof(sz), "%s/scan/plugins/%s", home, so);
-   if ((ps->bb_handle = dlopen(sz, RTLD_NOW|RTLD_GLOBAL)) == NULL)
+   if ((ps->bb_handle = load_plugin_library(UTILS_SCAN_PLUGIN_LIBRARY, so)) == NULL)
    {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
       SendScanEvent(ps->uri, EVENT_PLUGIN_FAIL);
       goto bugout;
    } 
-   
-   if ((ps->bb_open = dlsym(ps->bb_handle, "bb_open")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_open = get_library_symbol(ps->bb_handle, "bb_open")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_close = dlsym(ps->bb_handle, "bb_close")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+ 
+   if ((ps->bb_close = get_library_symbol(ps->bb_handle, "bb_close")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_get_parameters = dlsym(ps->bb_handle, "bb_get_parameters")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_get_parameters = get_library_symbol(ps->bb_handle, "bb_get_parameters")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_is_paper_in_adf = dlsym(ps->bb_handle, "bb_is_paper_in_adf")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_is_paper_in_adf = get_library_symbol(ps->bb_handle, "bb_is_paper_in_adf")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_start_scan = dlsym(ps->bb_handle, "bb_start_scan")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_start_scan = get_library_symbol(ps->bb_handle, "bb_start_scan")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_end_scan = dlsym(ps->bb_handle, "bb_end_scan")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_end_scan = get_library_symbol(ps->bb_handle, "bb_end_scan")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_get_image_data = dlsym(ps->bb_handle, "bb_get_image_data")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_get_image_data = get_library_symbol(ps->bb_handle, "bb_get_image_data")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_end_page = dlsym(ps->bb_handle, "bb_end_page")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_end_page = get_library_symbol(ps->bb_handle, "bb_end_page")) == NULL)
       goto bugout;
-   } 
+
 
    stat=0;
 
@@ -138,21 +114,15 @@ bugout:
 
 static int bb_unload(struct soap_session *ps)
 {
-   if (ps->bb_handle)
-   {   
-      dlclose(ps->bb_handle);
-      ps->bb_handle = NULL;
-   }  
-   if (ps->hpmud_handle)
-   {   
-      dlclose(ps->hpmud_handle);
-      ps->hpmud_handle = NULL;
-   }  
-   if (ps->math_handle)
-   {   
-      dlclose(ps->math_handle);
-      ps->math_handle = NULL;
-   }  
+    unload_library(ps->bb_handle);
+    ps->bb_handle = NULL;
+
+    unload_library(ps->hpmud_handle);
+    ps->hpmud_handle = NULL;
+
+    unload_library(ps->math_handle);
+    ps->math_handle = NULL;
+
    return 0;
 } /* bb_unload */
 
@@ -263,6 +233,14 @@ static int set_input_source_side_effects(struct soap_session *ps, enum INPUT_SOU
          break;
    }
 
+    if ((ps->adf_bryRange.max != ps->platen_bryRange.max) || (ps->adf_brxRange.max !=  ps->platen_brxRange.max))
+    {
+        ps->currentTly = ps->tlyRange.min;
+        ps->currentBrx = ps->brxRange.max;
+        ps->currentTlx = ps->tlxRange.min;
+        ps->currentBry = ps->bryRange.max;
+    }
+
    return 0;
 } /* set_input_source_side_effects */
 
@@ -315,6 +293,19 @@ static int init_options(struct soap_session *ps)
    ps->option[SOAP_OPTION_GROUP_ADVANCED].title = STR_TITLE_ADVANCED;
    ps->option[SOAP_OPTION_GROUP_ADVANCED].type = SANE_TYPE_GROUP;
    ps->option[SOAP_OPTION_GROUP_ADVANCED].cap = SANE_CAP_ADVANCED;
+
+   ps->option[SOAP_OPTION_BRIGHTNESS].name = SANE_NAME_BRIGHTNESS;
+   ps->option[SOAP_OPTION_BRIGHTNESS].title = SANE_TITLE_BRIGHTNESS;
+   ps->option[SOAP_OPTION_BRIGHTNESS].desc = SANE_DESC_BRIGHTNESS;
+   ps->option[SOAP_OPTION_BRIGHTNESS].type = SANE_TYPE_INT;
+   ps->option[SOAP_OPTION_BRIGHTNESS].unit = SANE_UNIT_NONE;
+   ps->option[SOAP_OPTION_BRIGHTNESS].size = sizeof(SANE_Int);
+   ps->option[SOAP_OPTION_BRIGHTNESS].cap = SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT | SANE_CAP_ADVANCED;
+   ps->option[SOAP_OPTION_BRIGHTNESS].constraint_type = SANE_CONSTRAINT_RANGE;
+   ps->option[SOAP_OPTION_BRIGHTNESS].constraint.range = &ps->brightnessRange;
+   ps->brightnessRange.min = SOAP_BRIGHTNESS_MIN;
+   ps->brightnessRange.max = SOAP_BRIGHTNESS_MAX;
+   ps->brightnessRange.quant = 0;
 
    ps->option[SOAP_OPTION_CONTRAST].name = SANE_NAME_CONTRAST;
    ps->option[SOAP_OPTION_CONTRAST].title = SANE_TITLE_CONTRAST;
@@ -492,7 +483,7 @@ SANE_Status soapht_open(SANE_String_Const device, SANE_Handle *handle)
       return SANE_STATUS_IO_ERROR;
    }
 
-   if (bb_load(session, "bb_soapht.so"))
+   if (bb_load(session, SCAN_PLUGIN_SOAPHT))
    {
       stat = SANE_STATUS_IO_ERROR;
       goto bugout;
@@ -514,7 +505,10 @@ SANE_Status soapht_open(SANE_String_Const device, SANE_Handle *handle)
    soapht_control_option(session, SOAP_OPTION_INPUT_SOURCE, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */  
 
    /* Set supported resolutions. */
-     soapht_control_option(session, SOAP_OPTION_SCAN_RESOLUTION, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
+   soapht_control_option(session, SOAP_OPTION_SCAN_RESOLUTION, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
+
+   /* Set supported brightness. */
+   soapht_control_option(session, SOAP_OPTION_BRIGHTNESS, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
 
    /* Set supported contrast. */
    soapht_control_option(session, SOAP_OPTION_CONTRAST, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
@@ -631,7 +625,7 @@ SANE_Status soapht_control_option(SANE_Handle handle, SANE_Int option, SANE_Acti
          }
          else
          {  /* Set default. */
-            ps->currentScanMode = CE_RGB24;
+            ps->currentScanMode = ps->scanModeMap[0];
             set_scan_mode_side_effects(ps, ps->currentScanMode);
             stat = SANE_STATUS_GOOD;
          }
@@ -675,7 +669,7 @@ SANE_Status soapht_control_option(SANE_Handle handle, SANE_Int option, SANE_Acti
          }
          else
          {  /* Set default. */
-            ps->currentInputSource = IS_PLATEN;
+            ps->currentInputSource = ps->inputSourceMap[0];
             set_input_source_side_effects(ps, ps->currentInputSource);
             mset_result |= SANE_INFO_RELOAD_PARAMS | SANE_INFO_RELOAD_OPTIONS;
             stat = SANE_STATUS_GOOD;
@@ -699,6 +693,11 @@ SANE_Status soapht_control_option(SANE_Handle handle, SANE_Int option, SANE_Acti
                   break;
                }
             }
+            if (stat != SANE_STATUS_GOOD)
+            {
+                ps->currentResolution = ps->resolutionList[1];
+                stat = SANE_STATUS_GOOD;
+            }
          }
          else
          {  /* Set default. */
@@ -717,13 +716,41 @@ SANE_Status soapht_control_option(SANE_Handle handle, SANE_Int option, SANE_Acti
             if (*int_value >= SOAP_CONTRAST_MIN && *int_value <= SOAP_CONTRAST_MAX)
             {
                ps->currentContrast = *int_value;
-               stat = SANE_STATUS_GOOD;
-               break;
             }
+            else
+            {
+               ps->currentContrast = SOAP_CONTRAST_DEFAULT;
+            }
+            mset_result |= SANE_INFO_RELOAD_PARAMS;
+            stat = SANE_STATUS_GOOD;
          }
          else
          {  /* Set default. */
             ps->currentContrast = SOAP_CONTRAST_DEFAULT;
+            stat = SANE_STATUS_GOOD;
+         }
+         break;
+      case SOAP_OPTION_BRIGHTNESS:
+         if (action == SANE_ACTION_GET_VALUE)
+         {
+            *int_value = ps->currentBrightness;
+            stat = SANE_STATUS_GOOD;
+         }
+         else if (action == SANE_ACTION_SET_VALUE)
+         {
+            if (*int_value >= SOAP_BRIGHTNESS_MIN && *int_value <= SOAP_BRIGHTNESS_MAX)
+            {
+               ps->currentBrightness = *int_value;
+            }
+            else
+            {
+              ps->currentBrightness = SOAP_BRIGHTNESS_DEFAULT;
+            }
+            stat = SANE_STATUS_GOOD;
+         }
+         else
+         {  /* Set default. */
+            ps->currentBrightness = SOAP_BRIGHTNESS_DEFAULT;
             stat = SANE_STATUS_GOOD;
          }
          break;
@@ -1144,8 +1171,4 @@ void soapht_cancel(SANE_Handle handle)
    }
    ps->bb_end_scan(ps, 0);
 } /* soapht_cancel */
-
-
-
-
 

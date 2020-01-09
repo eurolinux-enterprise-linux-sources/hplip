@@ -56,9 +56,11 @@
 #endif
 
 #define BASIC_LOG          1
-#define SAVE_PCL_FILE      2
+#define SAVE_OUT_FILE      2
 #define SAVE_INPUT_RASTERS 4
-#define SEND_TO_PRINTER_ALSO    8
+#define SAVE_OUT_FILE_IN_BACKEND    8
+#define DONT_SEND_TO_BACKEND   16
+#define DONT_SEND_TO_PRINTER   32
 
 #define MAX_COLORTYPE 2
 #define NUMBER_PLANES 3
@@ -68,7 +70,7 @@
 #define _STRINGIZE(x) #x
 #define STRINGIZE(x) _STRINGIZE(x)
 
-#define dbglog(args...) {syslog(LOG_ERR, __FILE__ " " STRINGIZE(__LINE__) ": " args); \
+#define dbglog(args...) {syslog(LOG_DEBUG, __FILE__ " " STRINGIZE(__LINE__) ": " args); \
 fprintf(stderr, __FILE__ " " STRINGIZE(__LINE__) ": " args);}
 
 
@@ -338,9 +340,9 @@ typedef enum
 #define EVENT_PRINT_FAILED_MISSING_PLUGIN 502
 enum COLORTYPE
 {
-    COLORTYPE_COLOR,       // 0
-    COLORTYPE_BLACK,       // 1
-    COLORTYPE_BOTH
+    COLORTYPE_COLOR     = 0,       
+    COLORTYPE_BLACK     = 1,    
+    COLORTYPE_BOTH      = 2
 };
 
 typedef struct ColorMap_s
@@ -411,6 +413,7 @@ typedef struct QualityAttributes_s
     int             media_type;
     int             media_subtype;
     int             print_quality;
+    char            hbpl1_print_quality[32];
     unsigned int    horizontal_resolution;
     unsigned int    vertical_resolution;
     unsigned int    actual_vertical_resolution;
@@ -430,6 +433,8 @@ typedef struct MediaAttributes_s
     int        vertical_overspray;
     int        left_overspray; 
     int        top_overspray;
+    char       PageSizeName[64];
+    char       MediaTypeName[64];
 } MediaAttributes;
 
 typedef struct JobAttributes_s

@@ -42,6 +42,7 @@
 #include "ijs_server.h"
 #include "hpijs.h"
 #include "services.h"
+#include "utils.h"
 
 extern void SendDbusMessage (const char *dev, const char *printer, int code, 
                              const char *username, const int jobid, const char *title);
@@ -71,7 +72,7 @@ int bug(const char *fmt, ...)
 }
 #endif
 
-void setLogLevel(UXServices *pSS)
+void setLogLevel(UXServices *pSS, char*user_name)
 {
     FILE    *fp;
     char    str[258];
@@ -96,9 +97,11 @@ void setLogLevel(UXServices *pSS)
 
     if (pSS->m_iLogLevel & SAVE_PCL_FILE)
     {
-        char    szFileName[32];
-	sprintf (szFileName, "/tmp/hpijs_%d.out", getpid());
-	pSS->outfp = fopen (szFileName, "w");
+        char    szFileName[MAX_FILE_PATH_LEN];
+        snprintf (szFileName,sizeof(szFileName), "%s/hp_%s_ijs_%d_XXXXXX", CUPS_TMP_DIR, user_name,  getpid());
+        createTempFile(szFileName, &pSS->outfp);
+
+//	pSS->outfp = fopen (szFileName, "w");
 	if (pSS->outfp)
 	{
 	    chmod (szFileName, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -585,7 +588,8 @@ int main (int argc, char *argv[], char *evenp[])
    char *raster = NULL, *k_raster = NULL;
    int status = EXIT_FAILURE;
    int ret, n, i, kn=0, width, k_width;
-
+   char user_name[32]={0,};
+        
    openlog("hpijs", LOG_PID,  LOG_DAEMON);
 
    if (argc > 1)
@@ -598,6 +602,9 @@ int main (int argc, char *argv[], char *evenp[])
          exit(0);
       }
    }
+
+   if (argc > 2)
+        strncpy(user_name, argv[2], sizeof(user_name));
 
 #ifdef HAVE_LIBHPIP
    char *pDev;
@@ -622,10 +629,12 @@ int main (int argc, char *argv[], char *evenp[])
       goto BUGOUT;
    }
 
-   setLogLevel(pSS);
+   setLogLevel(pSS, user_name);
 
 #ifdef CAPTURE
-   if ((pSS->InitScript("/tmp/capout", TRUE)) != NO_ERROR)
+   char szCapOutFile[MAX_FILE_PATH_LEN];
+   snprintf(szCapOutFile, sizeof(szCapOutFile),"%s/hp_%s_ijs_capout_XXXXXX",CUPS_TMP_DIR, user_name);
+   if ((pSS->InitScript(szCapOutFile, TRUE)) != NO_ERROR)
       BUG("unable to init capture");
 #endif
 

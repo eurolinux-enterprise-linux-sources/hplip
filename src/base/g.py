@@ -34,6 +34,7 @@ import re
 # Local
 from codes import *
 import logger
+from base import os_utils
 
 # System wide logger
 log = logger.Logger('', logger.Logger.LOG_LEVEL_INFO, logger.Logger.LOG_TO_CONSOLE)
@@ -120,7 +121,7 @@ class ConfigBase(object):
                 fp = open(self.filename, "r")
                 self.conf.readfp(fp)
                 fp.close()
-            except (OSError, IOError):
+            except (OSError, IOError, ConfigParser.MissingSectionHeaderError):
                 log.debug("Unable to open file %s for reading." % self.filename)
 
     def write(self):
@@ -149,20 +150,19 @@ class SysConfig(ConfigBase):
 
 class State(ConfigBase):
     def __init__(self):
+        if not os.path.exists('/var/lib/hp/') and os.geteuid() == 0:
+            os.makedirs('/var/lib/hp/')
+            cmd = 'chmod 755 /var/lib/hp/'
+            os_utils.execute(cmd)
         ConfigBase.__init__(self, '/var/lib/hp/hplip.state')
 
 
 class UserConfig(ConfigBase):
     def __init__(self):
+
+        sts, prop.user_dir = os_utils.getHPLIPDir()
+   
         if not os.geteuid() == 0:
-            prop.user_dir = os.path.expanduser('~/.hplip')
-
-            try:
-                if not os.path.exists(prop.user_dir):
-                    os.makedirs(prop.user_dir)
-            except OSError:
-                pass # This is sometimes OK, if running hpfax: for example
-
             prop.user_config_file = os.path.join(prop.user_dir, 'hplip.conf')
 
             if not os.path.exists(prop.user_config_file):
@@ -177,7 +177,6 @@ class UserConfig(ConfigBase):
 
         else:
             # If running as root, conf file is None
-            prop.user_dir = None
             prop.user_config_file = None
             ConfigBase.__init__(self, None)
 
@@ -286,6 +285,7 @@ def cleanup_spinner():
     if enable_spinner and not log.is_debug() and sys.stdout.isatty():
         sys.stdout.write("\b \b")
         sys.stdout.flush()
+
 
 
 # Internal/messaging errors

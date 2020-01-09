@@ -61,7 +61,7 @@ User-agent: hplip/2.0\r
 Host: %s\r
 Content-length: %d\r
 \r
-%s""" % (url, self.http_host, len(post), post)
+%s""" % (url, str(self.http_host), len(post), post)
         log.log_data(data)
         self.writeEWS_LEDM(data)
         response = cStringIO.StringIO()
@@ -96,7 +96,11 @@ Content-length: %d\r
 
 
     def setStationName(self, name):
-        xml = setStationNameXML %(name)
+        try:
+            xml = setStationNameXML %(name.encode('utf-8'))
+        except(UnicodeEncodeError, UnicodeDecodeError):
+            log.error("Unicode Error")
+
         return self.put("/DevMgmt/FaxConfigDyn.xml", xml)
 
 
@@ -104,3 +108,16 @@ Content-length: %d\r
         return self.readAttributeFromXml_EWS("/DevMgmt/FaxConfigDyn.xml",'faxcfgdyn:faxconfigdyn-faxcfgdyn:systemsettings-dd:companyname')
 
     station_name = property(getStationName, setStationName) 
+
+
+    def setDateAndTime(self):
+        t = time.localtime()
+        date_buf = "%4d-%02d-%02dT%02d:%02d:%02d" % (t[0], t[1], t[2], t[3], t[4], t[5])
+        xml = setDateTimeXML %(date_buf)
+        log.debug("setDateTimeXML Value:%s" %xml)
+        
+        if self.put("/DevMgmt/ProductConfigDyn.xml", xml):
+            return True
+        else:
+            log.debug ("Failed to set date and time. Set date and time using front panel.")
+            return False
