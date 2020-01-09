@@ -1,0 +1,67 @@
+diff -up hplip-3.12.4/check.py~ hplip-3.12.4/check.py
+--- hplip-3.12.4/check.py~	2012-04-10 09:35:14.000000000 +0100
++++ hplip-3.12.4/check.py	2012-11-22 16:12:19.271956271 +0000
+@@ -725,34 +725,38 @@ try:
+ 
+         if scanning_enabled:
+             tui.header("SANE CONFIGURATION")
+-            log.info(log.bold("'hpaio' in '/etc/sane.d/dll.conf'..."))
+-            try:
+-                f = file('/etc/sane.d/dll.conf', 'r')
+-            except IOError:
+-                log.error("'/etc/sane.d/dll.conf' not found. Is SANE installed?")
+-                num_errors += 1
+-            else:
+-                found = False
+-                for line in f:
+-		    lineNoSpace = re.sub(r'\s', '', line) 
+-		    hpaiomatched=re.match('hpaio',lineNoSpace)
+-#                   if 'hpaio' in line:
+-                    if hpaiomatched:
+-                        found = True
++            found = False
++            for path in ['/etc/sane.d/dll.conf',
++                         '/etc/sane.d/dll.d/hpaio']:
++                log.info(log.bold("'hpaio' in '/etc/sane.d/dll.conf'..."))
++                try:
++                    f = file(path, 'r')
++                except IOError:
++                    log.error("'/etc/sane.d/dll.conf' not found. Is SANE installed?")
++                else:
++                    for line in f:
++                        lineNoSpace = re.sub(r'\s', '', line) 
++                        hpaiomatched=re.match('hpaio',lineNoSpace)
++                        if hpaiomatched:
++                            found = True
++                            break
+ 
+                 if found:
+-                    log.info("OK, found. SANE backend 'hpaio' is properly set up.")
+-                else:
+-                    num_errors += 1
+-                    log.error("Not found. SANE backend 'hpaio' NOT properly setup (needs to be added to /etc/sane.d/dll.conf).")
++                    break
+ 
+-                log.info()
+-                log.info(log.bold("Checking output of 'scanimage -L'..."))
+-                if utils.which('scanimage'):
+-                    status, output = utils.run("scanimage -L")
+-                    log.info(output)
+-                else:
+-                    log.error("scanimage not found.")
++            if found:
++                log.info("OK, found. SANE backend 'hpaio' is properly set up.")
++            else:
++                num_errors += 1
++                log.error("Not found. SANE backend 'hpaio' NOT properly setup (needs to be added to /etc/sane.d/dll.conf).")
++
++            log.info()
++            log.info(log.bold("Checking output of 'scanimage -L'..."))
++            if utils.which('scanimage'):
++                status, output = utils.run("scanimage -L")
++                log.info(output)
++            else:
++                log.error("scanimage not found.")
+ 
+         tui.header("PYTHON EXTENSIONS")
+ 

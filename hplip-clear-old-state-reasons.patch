@@ -1,0 +1,17 @@
+diff -up hplip-3.11.12/prnt/hpcups/HPCupsFilter.cpp.clear-old-state-reasons hplip-3.11.12/prnt/hpcups/HPCupsFilter.cpp
+--- hplip-3.11.12/prnt/hpcups/HPCupsFilter.cpp.clear-old-state-reasons	2011-12-19 12:12:38.000000000 +0100
++++ hplip-3.11.12/prnt/hpcups/HPCupsFilter.cpp	2011-12-19 12:16:06.524701093 +0100
+@@ -502,6 +502,13 @@ int HPCupsFilter::StartPrintJob(int  arg
+ 
+     signal(SIGTERM, HPCancelJob);
+ 
++/*
++ *  Prior to the re-write of hpcups, this filter managed the
++ *  marker-supply-low-warning printer state reason.  Make sure to
++ *  clear that state reason so that upgrades work correctly.
++ */
++    fputs ("STATE: -marker-supply-low-warning\n", stderr);
++
+     cups_raster = cupsRasterOpen(fd, CUPS_RASTER_READ);
+ 
+     if (cups_raster == NULL) {

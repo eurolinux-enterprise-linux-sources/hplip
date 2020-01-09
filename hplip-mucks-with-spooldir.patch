@@ -1,0 +1,30 @@
+diff -up hplip-3.11.12/prnt/hpcups/HPCupsFilter.cpp.mucks-with-spooldir hplip-3.11.12/prnt/hpcups/HPCupsFilter.cpp
+--- hplip-3.11.12/prnt/hpcups/HPCupsFilter.cpp.mucks-with-spooldir	2011-12-09 12:17:50.000000000 +0100
++++ hplip-3.11.12/prnt/hpcups/HPCupsFilter.cpp	2011-12-19 12:02:03.581239338 +0100
+@@ -466,26 +466,6 @@ int HPCupsFilter::StartPrintJob(int  arg
+ 
+     getLogLevel();
+     m_JA.job_id = atoi(argv[1]);
+-    FILE    *fp;
+-    char    dFileName[32];
+-    memset(dFileName, 0, sizeof(dFileName));
+-    m_JA.job_id = atoi(argv[1]);
+-    snprintf (dFileName, sizeof(dFileName), "/var/spool/cups/d%05d-001", m_JA.job_id);
+-    if ((fp = fopen (dFileName, "r")))
+-    {
+-        char    line[258];
+-        for (int i = 0; i < 10; i++)
+-        {
+-            fgets (line, 256, fp);
+-            if (!strncmp (line, "%%Pages:", 8))
+-            {
+-                sscanf (line+9, "%d", &m_JA.total_pages);
+-                break;
+-            }
+-        }
+-        fclose (fp);
+-    }
+-
+     m_ppd = ppdOpenFile(getenv("PPD"));
+     if (m_ppd == NULL) {
+         dbglog("DEBUG: ppdOpenFile failed for %s\n", getenv("PPD"));
