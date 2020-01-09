@@ -1,7 +1,7 @@
 Summary: HP Linux Imaging and Printing Project
 Name: hplip
 Version: 3.12.4
-Release: 4%{?dist}.1
+Release: 6%{?dist}
 License: GPLv2+ and MIT
 Group: System Environment/Daemons
 Conflicts: system-config-printer < 0.6.132
@@ -191,6 +191,7 @@ mv prnt/drv/hpijs.drv.in{,.deviceIDs-drv-hpijs}
 
 # Removed SYSFS use in udev rules and actually made them work
 # (bug #560754).
+# Move udev rules to /lib/udev/rules.d (bug #905143).
 %patch7 -p1 -b .udev-rules
 
 # Retry when connecting to device fails (bug #552582).
@@ -482,7 +483,7 @@ rm -rf %{buildroot}
 %files common
 %defattr(-,root,root,-)
 %doc COPYING
-%{_prefix}/lib/udev/rules.d/*
+/lib/udev/rules.d/*.rules
 %dir %{_sysconfdir}/hp
 %config(noreplace) %{_sysconfdir}/hp/hplip.conf
 %dir %{_datadir}/hplip
@@ -552,7 +553,10 @@ fi
 %postun libs -p /sbin/ldconfig
 
 %changelog
-* Thu Sep 12 2013 Tim Waugh <twaugh@redhat.com> - 3.12.4-4:.1
+* Mon Apr  7 2014 Tim Waugh <twugh@redhat.com> 3.12.4-6
+- Move udev rules to /lib/udev/rules.d (bug #905143).
+
+* Thu Sep 12 2013 Tim Waugh <twaugh@redhat.com> - 3.12.4-5
 - Applied patch to avoid unix-process authorization subject when using
   polkit as it is racy (CVE-2013-4325).
 
