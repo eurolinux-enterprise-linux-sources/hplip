@@ -1,7 +1,7 @@
 Summary: HP Linux Imaging and Printing Project
 Name: hplip
 Version: 3.12.4
-Release: 4%{?dist}
+Release: 4%{?dist}.1
 License: GPLv2+ and MIT
 Group: System Environment/Daemons
 Conflicts: system-config-printer < 0.6.132
@@ -45,6 +45,7 @@ Patch34: hplip-notification-exception.patch
 Patch36: hplip-CVE-2010-4267.patch
 Patch37: hplip-check.patch
 Patch38: hplip-CVE-2013-0200.patch
+Patch39: hplip-CVE-2013-4325.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
@@ -303,6 +304,10 @@ done
 # (bug #902163).
 %patch38 -p1 -b .CVE-2013-0200
 
+# Applied patch to avoid unix-process authorization subject when using
+# polkit as it is racy (CVE-2013-4325).
+%patch39 -p1 -b .CVE-2013-4325
+
 sed -i.duplex-constraints \
     -e 's,\(UIConstraints.* \*Duplex\),//\1,' \
     prnt/drv/hpcups.drv.in
@@ -547,6 +552,10 @@ fi
 %postun libs -p /sbin/ldconfig
 
 %changelog
+* Thu Sep 12 2013 Tim Waugh <twaugh@redhat.com> - 3.12.4-4:.1
+- Applied patch to avoid unix-process authorization subject when using
+  polkit as it is racy (CVE-2013-4325).
+
 * Tue Jan 22 2013 Tim Waugh <twaugh@redhat.com> - 3.12.4-4
 - Applied patch to fix CVE-2013-0200, temporary file vulnerability
   (bug #902163).
