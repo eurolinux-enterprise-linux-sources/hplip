@@ -7,7 +7,7 @@
 Summary: HP Linux Imaging and Printing Project
 Name: hplip
 Version: 3.13.7
-Release: 2%{?dist}
+Release: 6%{?dist}
 License: GPLv2+ and MIT
 Group: System Environment/Daemons
 
@@ -68,6 +68,9 @@ BuildRequires: dbus-devel
 
 # Make sure we get postscriptdriver tags.
 BuildRequires: python-cups, cups
+
+# macros: %%{_tmpfilesdir}, %%{_udevrulesdir}
+BuildRequires: systemd
 
 %description
 The Hewlett-Packard Linux Imaging and Printing Project provides
@@ -325,8 +328,16 @@ make
 mkdir -p %{buildroot}%{_bindir}
 make install DESTDIR=%{buildroot}
 
-# Create /var/run/hplip
-mkdir -p %{buildroot}%{_localstatedir}/run/hplip
+# Create /run/hplip
+mkdir -p %{buildroot}/run/hplip
+
+# install /usr/lib/tmpfiles.d/hplip.conf (bug #1033131)
+mkdir -p %{buildroot}%{_tmpfilesdir}
+cat > %{buildroot}%{_tmpfilesdir}/hplip.conf <<EOF
+# See tmpfiles.d(5) for details
+
+d /run/hplip 0775 root lp -
+EOF
 
 # Remove unpackaged files
 rm -rf  %{buildroot}%{_sysconfdir}/sane.d \
@@ -474,11 +485,12 @@ rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/hplip-systray.desktop
 %{_localstatedir}/lib/hp
 %dir %attr(0774,root,lp) %{_localstatedir}/log/hp
 %dir %attr(1774,root,lp) %{_localstatedir}/log/hp/tmp
-%dir %attr(0775,root,lp) %{_localstatedir}/run/hplip
+%dir %attr(0775,root,lp) /run/hplip/
+%{_tmpfilesdir}/hplip.conf
 
 %files common
 %doc COPYING
-%{_prefix}/lib/udev/rules.d/*.rules
+%{_udevrulesdir}/*.rules
 %dir %{_sysconfdir}/hp
 %config(noreplace) %{_sysconfdir}/hp/hplip.conf
 %dir %{_datadir}/hplip
@@ -529,6 +541,18 @@ rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/hplip-systray.desktop
 %postun libs -p /sbin/ldconfig
 
 %changelog
+* Fri Jan 24 2014 Daniel Mach <dmach@redhat.com> - 3.13.7-6
+- Mass rebuild 2014-01-24
+
+* Fri Dec 27 2013 Daniel Mach <dmach@redhat.com> - 3.13.7-5
+- Mass rebuild 2013-12-27
+
+* Wed Nov 27 2013 Jiri Popelka <jpopelka@redhat.com> - 3.13.7-4
+- do not %%ghost /run/hplip (bug #1033131)
+
+* Mon Nov 25 2013 Jiri Popelka <jpopelka@redhat.com> - 3.13.7-3
+- create /usr/lib/tmpfiles.d/hplip.conf (bug #1033131)
+
 * Wed Sep 11 2013 Tim Waugh <twaugh@redhat.com> - 3.13.7-2
 - Applied patch to avoid unix-process authorization subject when using
   polkit as it is racy (CVE-2013-4325).
