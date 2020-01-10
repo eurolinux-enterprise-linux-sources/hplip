@@ -7,7 +7,7 @@
 Summary: HP Linux Imaging and Printing Project
 Name: hplip
 Version: 3.13.7
-Release: 6%{?dist}
+Release: 6%{?dist}.1
 License: GPLv2+ and MIT
 Group: System Environment/Daemons
 
@@ -47,6 +47,7 @@ Patch31: hplip-IEEE-1284-4.patch
 Patch32: hplip-check.patch
 Patch33: hplip-mkstemp.patch
 Patch34: hplip-CVE-2013-4325.patch
+Patch35: hplip-do-not-crash-on-usb-failure.patch
 
 %global hpijs_epoch 1
 Requires: hpijs%{?_isa} = %{hpijs_epoch}:%{version}-%{release}
@@ -302,6 +303,9 @@ done
 # polkit as it is racy (CVE-2013-4325).
 %patch34 -p1 -b .CVE-2013-4325
 
+# hp/hpfax backends crash when no USB is available (bug #1343581).
+%patch35 -p1 -b .hplip-usb-no-crash
+
 sed -i.duplex-constraints \
     -e 's,\(UIConstraints.* \*Duplex\),//\1,' \
     prnt/drv/hpcups.drv.in
@@ -541,6 +545,9 @@ rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/hplip-systray.desktop
 %postun libs -p /sbin/ldconfig
 
 %changelog
+* Tue Jun 07 2016 Jiri Popelka <jpopelka@redhat.com> - 3.13.7-6.1
+- hp/hpfax backends crash when no USB is available (bug #1343581)
+
 * Fri Jan 24 2014 Daniel Mach <dmach@redhat.com> - 3.13.7-6
 - Mass rebuild 2014-01-24
 

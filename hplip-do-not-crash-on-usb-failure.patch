@@ -1,0 +1,113 @@
+--- hplip-3.13.7-rhel-7.0/io/hpmud/musb.c	2015-07-07 12:24:22.863281488 -0700
++++ hplip-3.13.7.bz1332714.new/io/hpmud/musb.c	2016-05-04 12:06:34.171379958 -0700
+@@ -689,7 +689,8 @@ static libusb_device *get_libusb_device(
+ 	int numdevs = 0;        /* number of connected devices */
+ 	int i, conf, iface, altset ;
+ 
+-	libusb_init(&libusb_ctx);
++	i = libusb_init(&libusb_ctx);
++	if (i) goto bugout;
+ 	numdevs = libusb_get_device_list(libusb_ctx, &libusb_dev_list);
+ 	for (i=0; i< numdevs; i++)
+ 	{
+@@ -2019,7 +2020,7 @@ bugout:
+ int __attribute__ ((visibility ("hidden"))) musb_probe_devices(char *lst, int lst_size, int *cnt)
+ {
+ 	libusb_context *ctx = NULL;
+-	libusb_device **list; /*List of connected USB devices */
++	libusb_device **list = NULL; /*List of connected USB devices */
+ 	libusb_device *dev = NULL; /* Current device */
+ 	struct libusb_device_descriptor devdesc; /* Current device descriptor */
+ 	struct libusb_config_descriptor *confptr = NULL; /* Pointer to current configuration */
+@@ -2036,7 +2037,8 @@ int __attribute__ ((visibility ("hidden"
+ 	char serial[128], mfg[128], sz[HPMUD_LINE_SIZE];
+ 	int r, size=0;
+ 
+-	libusb_init(&ctx);
++	i = libusb_init(&ctx);
++	if (i) goto bugout;
+ 	numdevs = libusb_get_device_list(ctx, &list);
+ 
+ 	if (numdevs <= 0)
+@@ -2132,12 +2134,14 @@ int __attribute__ ((visibility ("hidden"
+ 	}//end for loop
+ 
+ bugout:
+-	if (!hd)
++	if (hd)
+ 		libusb_close(hd);
+ 	if (confptr)
+ 		libusb_free_config_descriptor(confptr);
+-	libusb_free_device_list(list, 1);
+-	libusb_exit(ctx);
++	if (list)
++		libusb_free_device_list(list, 1);
++	if (ctx)
++		libusb_exit(ctx);
+ 
+ 	return size;
+ }
+@@ -2145,7 +2149,7 @@ bugout:
+ enum HPMUD_RESULT hpmud_make_usb_uri(const char *busnum, const char *devnum, char *uri, int uri_size, int *bytes_read)
+ {
+ 	libusb_context *ctx = NULL;
+-	libusb_device **list; /*List of connected USB devices */
++	libusb_device **list = NULL; /*List of connected USB devices */
+ 	libusb_device *dev = NULL, *found_dev=NULL;
+ 	libusb_device_handle *hd=NULL;
+ 	struct libusb_device_descriptor devdesc; /* Current device descriptor */
+@@ -2163,7 +2167,8 @@ enum HPMUD_RESULT hpmud_make_usb_uri(con
+ 
+ 	*bytes_read=0;
+ 
+-	libusb_init(&ctx);
++	i = libusb_init(&ctx);
++	if (i) goto bugout;
+ 	numdevs = libusb_get_device_list(ctx, &list);
+ 
+ 	if (numdevs <= 0)
+@@ -2266,8 +2271,10 @@ bugout:
+ 	if (hd != NULL)
+ 		libusb_close(hd);
+ 
+-	libusb_free_device_list(list, 1);
+-	libusb_exit(ctx);
++	if (list)
++		libusb_free_device_list(list, 1);
++	if (ctx)
++		libusb_exit(ctx);
+ 
+ 	return stat;
+ }
+@@ -2275,7 +2282,7 @@ bugout:
+ enum HPMUD_RESULT hpmud_make_usb_serial_uri(const char *sn, char *uri, int uri_size, int *bytes_read)
+ {
+ 	libusb_context *ctx = NULL;
+-	libusb_device **list; /*List of connected USB devices */
++	libusb_device **list = NULL; /*List of connected USB devices */
+ 	libusb_device *dev = NULL, *found_dev=NULL;
+ 
+ 	char model[128];
+@@ -2286,7 +2293,8 @@ enum HPMUD_RESULT hpmud_make_usb_serial_
+ 
+ 	*bytes_read=0;
+ 
+-	libusb_init(&ctx);
++	i = libusb_init(&ctx);
++	if (i) goto bugout;
+ 	numdevs = libusb_get_device_list(ctx, &list);
+ 
+ 	if (numdevs <= 0)
+@@ -2312,8 +2320,10 @@ enum HPMUD_RESULT hpmud_make_usb_serial_
+ 	stat = HPMUD_R_OK;
+ 
+ bugout:
+-	libusb_free_device_list(list, 1);
+-	libusb_exit(ctx);
++	if (list)
++		libusb_free_device_list(list, 1);
++	if (ctx)
++		libusb_exit(ctx);
+ 
+ 	return stat;
+ }
