@@ -42,6 +42,7 @@
 #include "LJZjStream.h"
 #include "Utils.h"
 #include "hpjbig_wrapper.h"
+#include "utils.h"
 
 #define ZJC_BAND_HEIGHT    100
 
@@ -675,10 +676,10 @@ DRIVER_ERROR LJZjStream::preProcessRasterData(cups_raster_t **ppcups_raster, cup
 	cups_raster_t *even_pages_raster=NULL;
 	cups_raster_t *odd_pages_raster = NULL;
 	BYTE* pPageDataBuffer = NULL;
-	char hpEvenPagesFile[64]={0,};
-	char hpOddPagesFile[64]={0,};
-	snprintf(hpEvenPagesFile, sizeof(hpEvenPagesFile), "%s/hplipEvenPagesXXXXXX","/var/log/hp/tmp");
-	snprintf(hpOddPagesFile, sizeof(hpOddPagesFile), "%s/hplipOddPagesXXXXXX", "/var/log/hp/tmp");
+	char hpEvenPagesFile[MAX_FILE_PATH_LEN]={0,};
+	char hpOddPagesFile[MAX_FILE_PATH_LEN]={0,};
+	snprintf(hpEvenPagesFile, sizeof(hpEvenPagesFile), "%s/hp_%s_cups_EvenPagesXXXXXX",CUPS_TMP_DIR, m_pJA->user_name);
+	snprintf(hpOddPagesFile, sizeof(hpOddPagesFile), "%s/hp_%s_cups_OddPagesXXXXXX", CUPS_TMP_DIR, m_pJA->user_name);
 	
 	if (1 != m_pJA->pre_process_raster || !firstpage_cups_header->Duplex){		                                  
 		return  NO_ERROR;                                  

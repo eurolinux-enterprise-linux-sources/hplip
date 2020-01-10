@@ -26,10 +26,12 @@ import os
 import re
 
 # Local
-from base.g import *
-from base import utils, tui, password, os_utils, smart_install
+from .g import *
+from . import utils, tui, password, os_utils, smart_install
 from prnt import cups
 from installer import core_install
+from .sixext import to_string_utf8
+
 
 # ppd type
 HPCUPS = 1
@@ -38,7 +40,7 @@ HPPS = 3
 HPOTHER = 4
 
 DEVICE_URI_PATTERN = re.compile(r"""(.*):/(.*?)/(\S*?)\?(?:serial=(\S*)|device=(\S*)|ip=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}[^&]*)|zc=(\S+))(?:&port=(\d))?""", re.I)
-NICKNAME_PATTERN = re.compile(r'''\*NickName:\s*\"(.*)"''', re.MULTILINE)
+NICKNAME_PATTERN = re.compile(b'''\*NickName:\s*\"(.*)"''', re.MULTILINE)
 NET_PATTERN = re.compile(r"""(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})""")
 NET_ZC_PATTERN = re.compile(r'''zc=(.*)''',re.IGNORECASE)
 NET_OTHER_PATTERN = re.compile(r'''(.*)://(.*)''',re.IGNORECASE)
@@ -66,49 +68,6 @@ class DetectedDevice:
 
 ##### METHODS #####
 
-# Checks 'lp' group is added o not
-def check_user_groups():
-    result = False
-    sts,output = utils.run('groups')
-    if sts != 0:
-        log.error("Failed to get groups")
-    else:
-        output = output.rstrip('\r\n')
-        log.debug("groups =%s "%output)
-        grp_list= output.split(' ')
-        cnt = 0
-        while cnt < len(grp_list) :
-            if grp_list[cnt] == 'lp':
-                result = True
-                break
-            cnt += 1
-
-    return result
-
-# This function adds the groups ('lp') to user
-def add_group(core, mode, passwordObj):
-    result = False
-    add_user_to_group = core.get_distro_ver_data('add_user_to_group', '')
-    if add_user_to_group:
-        usermod = os.path.join(utils.which("usermod"), "usermod") + " %s %s" % (add_user_to_group, prop.username)
-    else:
-        usermod = os.path.join(utils.which("usermod"), "usermod") + " %s -a %s" % ("-Glp", prop.username)
-
-    if passwordObj == None:
-        passwordObj = password.Password(mode)
-
-    cmd =passwordObj.getAuthCmd() % usermod
-    log.info("cmd = %s" %cmd)
-
-    pswd_msg = "Enter root/superuser password to add 'lp' group"
-    sts, output = utils.run(cmd, passwordObj, pswd_msg)
-    if sts == 0:
-        result = True
-
-    return result
-
-
-
 #Add Printer info to dictionary
 def addToDeviceList(Key, printer_name, device_uri,back_end, ppd_fileType,PPDFileError, Is_Print_Q_Enabled):
     if ppd_fileType != None:
@@ -125,7 +84,8 @@ def addToDeviceList(Key, printer_name, device_uri,back_end, ppd_fileType,PPDFile
 def parseQueues(mode):
     is_hpcups_installed = to_bool(sys_conf.get('configure', 'hpcups-install', '0'))
     is_hpijs_installed = to_bool(sys_conf.get('configure', 'hpijs-install', '0'))
-    status, output = utils.run('lpstat -v')
+    st, output = utils.run('lpstat -v')
+    status = True
 
     cups_printers = []
     if output.find("No destinations added") != -1 or output.find("lpstat:") != -1:
@@ -148,6 +108,8 @@ def parseQueues(mode):
 
             if device_uri.startswith("cups-pdf:/"):
                 continue
+            if device_uri.startswith("ipp:/"):
+                continue
 
             log.debug(log.bold(printer_name))
             log.debug(log.bold('-'*len(printer_name)))
@@ -169,19 +131,25 @@ def parseQueues(mode):
             else:
                 log.debug("PPD: %s" % ppd_file)
             try:
-                fileptr = file(ppd_file, 'r').read(4096)
+                fileptr = open(ppd_file, 'rb').read()
             except IOError:
                 log.warn("Fail to read ppd=%s file"%ppd_file)
+                if os.access(ppd_file,os.R_OK):
+                    log.debug("File %s has read permissions" %ppd_file)
+                else:
+                    log.warn("Insufficient permission to access file %s" %ppd_file)
+                    status = False
+                    return mapofDevices,status
                 desc=''
             else:
                 try:
-                    desc = NICKNAME_PATTERN.search(fileptr).group(1)
+                    desc = to_string_utf8( NICKNAME_PATTERN.search(fileptr).group(1) )
                 except AttributeError:
                     desc = ''
 
             log.debug("PPD Description: %s" % desc)
             cmd= 'lpstat -p%s' % printer_name
-            status, output = utils.run(cmd)
+            st, output = utils.run(cmd)
             log.debug("Printer status: %s" % output.replace("\n", ""))
 
             #### checking for USb devices ####
@@ -239,7 +207,7 @@ def parseQueues(mode):
 
                 addToDeviceList(Key, printer_name, device_uri,back_end, ppd_fileType,PPDFileError, Is_Print_Q_Enabled)
     log.info("")
-    return mapofDevices
+    return mapofDevices,status
 
 
 # Validate and remove Queue
@@ -264,12 +232,16 @@ def reconfigure_Queue(que, mode, dialog= None,app=None):
                 log.debug("User Exit")
                 sys.exit(1)
             elif value == True:
-                cups.delPrinter(que.PrinterName)
-                log.info("' %s' removed successfully.\nRe-configuring this printer by hp-setup..."%que.PrinterName)
-                path = utils.which('hp-setup')
-                if path:
-                    cmd = 'hp-setup -i'
-                    os_utils.execute(cmd)
+                status, status_str = cups.cups_operation(cups.delPrinter, INTERACTIVE_MODE, '', None, que.PrinterName)
+
+                if status != cups.IPP_OK:
+                    log.error("Failed to remove '%s' queue.\nRemove using hp-toolbox."%que.PrinterName)
+                else:
+                    log.info("' %s' removed successfully.\nRe-configuring this printer by hp-setup..."%que.PrinterName)
+                    if utils.which('hp-setup'):
+                        cmd = 'hp-setup -i'
+                        os_utils.execute(cmd)
+
         elif que.IsEnabled == False:
             Error_Found = True
             responce, value =tui.enter_yes_no("'%s Queue is paused. Do you want to enable queue?"%(que.PrinterName))
@@ -340,52 +312,55 @@ def parseDeviceURI(device_uri):
     return back_end, is_hp, bus, model, serial, dev_file, host, zc, port
 
 
-def main_function(passwordObj = None, mode = GUI_MODE, ui_toolkit= UI_TOOLKIT_QT4, quiet_mode = False, check_grps= False,DEVICE_URI=None):
+def main_function(passwordObj = None, mode = GUI_MODE, ui_toolkit= UI_TOOLKIT_QT4, quiet_mode = False, DEVICE_URI=None):
     global Error_Found
     try:
-        from base import device, pml
+        from . import device, pml
         # This can fail due to hpmudext not being present
     except ImportError:
         log.error("Device library is not avail.")
         sys.exit(1)
 
     if mode == INTERACTIVE_MODE:
-        if check_grps and check_user_groups() is False:
-            core = core_install.CoreInstall(core_install.MODE_CHECK)
-            core.init()
-            if add_group(core, mode, passwordObj) is False:
-                Error_Found = True
-                log.error("Failed to add lp group to user[%s]. Manually add 'lp' group to usergroups. And reboot system."%prop.username)
-            else:
-                log.info("Groups added successfully and reboot is required. Please reboot system to take effect.")
-        mapofDevices = parseQueues(mode)
-        if mapofDevices.items() == 0:
-            log.debug("No queues found.")
+        try:
+            from . import password
+        except ImportError:
+            log.warn("Failed to import password object")
+        else:
+            cups.setPasswordCallback(password.showPasswordPrompt)
 
-        for key,val in mapofDevices.items():
-            if len(val) >1:
-                if not quiet_mode:
-                    Error_Found = True
-                    log.warn("%d queues of same device %s is configured.\nRemove unwanted queues."%(len(val),val[0].PrinterName))
+        mapofDevices,status = parseQueues(mode)
+        if status:
+            if list(mapofDevices.items()) == 0:
+                log.debug("No queues found.")
 
-                for que in val:
-                    reconfigure_Queue(que, mode)
-            else:
-                log.debug("")
-                log.debug("Single print queue is configured for '%s'. " %val[0].PrinterName)
-                reconfigure_Queue(val[0], mode)
+            for key,val in list(mapofDevices.items()):
+                if len(val) >1:
+                    if not quiet_mode:
+                        Error_Found = True
+                        log.warn("%d queues of same device %s is configured.\nRemove unwanted queues."%(len(val),val[0].PrinterName))
 
-        SI_sts = smart_install.disable(mode, '', None, None, passwordObj)
-        if SI_sts != smart_install.SIH_NO_SI_DEVICES:
-            Error_Found = True
-
-        if Error_Found is False:
-            if not quiet_mode:
-                if len(mapofDevices) == 0:
-                    log.warn("No Queue(s) configured.")
+                    for que in val:
+                        reconfigure_Queue(que, mode)
                 else:
-#                    log.info(log.green("Queue(s) configured correctly using HPLIP."))
-                    log.info("Queue(s) configured correctly using HPLIP.")
+                    log.debug("")
+                    log.debug("Single print queue is configured for '%s'. " %val[0].PrinterName)
+                    reconfigure_Queue(val[0], mode)
+
+            SI_sts, error_str = smart_install.disable(mode, '', None, None, passwordObj)
+            if SI_sts != ERROR_NO_SI_DEVICE:
+                Error_Found = True
+
+            if Error_Found is False:
+                if not quiet_mode:
+                    if len(mapofDevices) == 0:
+                        log.warn("No Queue(s) configured.")
+                    else:
+                        log.info("Queue(s) configured correctly using HPLIP.")
+        else:
+            log.warn("Could not complete Queue(s) configuration check")
+
+        cups.releaseCupsInstance()
 
     elif mode == GUI_MODE:
         # Only Qt4 is supported.
@@ -396,46 +371,45 @@ def main_function(passwordObj = None, mode = GUI_MODE, ui_toolkit= UI_TOOLKIT_QT
         try:
             from PyQt4.QtGui import QApplication, QMessageBox
             from ui4.queuesconf import QueuesDiagnose
+            from ui4 import setupdialog
         except ImportError:
             log.error("Unable to load Qt4 support. Is it installed?")
             sys.exit(1)
         app = QApplication(sys.argv)
         dialog = QueuesDiagnose(None, "","",QUEUES_MSG_SENDING,passwordObj)
-        if check_grps and check_user_groups() is False:
-            core = core_install.CoreInstall(core_install.MODE_CHECK)
-            core.init()
-            if add_group(core, mode, passwordObj) is False:
-                Error_Found = True
-                dialog.showMessage("User must be part of 'lp' group.\nManually add 'lp' group to '%s' user. " %prop.username)
-            else:
-                dialog.showSuccessMessage("Groups added successfully and reboot is required. Please reboot system to take effect.")
 
-        mapofDevices = parseQueues(mode)
-        if mapofDevices.items() == 0:
-            log.debug("No queues found.")
+        cups.setPasswordCallback(setupdialog.showPasswordUI)
+        mapofDevices,status = parseQueues(mode)
+        if status:
+            if list(mapofDevices.items()) == 0:
+                log.debug("No queues found.")
 
-        for key,val in mapofDevices.items():
-            if len(val) >1:
-                log.warn('%d queues of same device %s is configured.  Remove unwanted queues.' %(len(val),val[0].PrinterName))
-                if not quiet_mode:
-                    Error_Found = True
-                    dialog.showMessage("%d queues of same device %s is configured.\nRemove unwanted queues."%(len(val),val[0].PrinterName))
-                for que in val:
-                    reconfigure_Queue(que, mode,dialog,app)
+            for key,val in list(mapofDevices.items()):
+                if len(val) >1:
+                    log.warn('%d queues of same device %s is configured.  Remove unwanted queues.' %(len(val),val[0].PrinterName))
+                    if not quiet_mode:
+                        Error_Found = True
+                        dialog.showMessage("%d queues of same device %s is configured.\nRemove unwanted queues."%(len(val),val[0].PrinterName))
+                    for que in val:
+                        reconfigure_Queue(que, mode, dialog,app)
 
-            else:
-                log.debug("")
-                log.debug("Single print queue is configured for '%s'. " %val[0].PrinterName)
-                reconfigure_Queue(val[0], mode,dialog, app)
-
-        SI_sts = smart_install.disable(mode, ui_toolkit, dialog, app, passwordObj)
-        if SI_sts != smart_install.SIH_NO_SI_DEVICES:
-            Error_Found = True
-
-        if Error_Found is False:
-            if not quiet_mode:
-                if len(mapofDevices) == 0:
-                    msg= "No Queue(s) configured."
                 else:
-                    msg= "Queue(s) configured correctly using HPLIP."
-                dialog.showSuccessMessage(msg)
+                    log.debug("")
+                    log.debug("Single print queue is configured for '%s'. " %val[0].PrinterName)
+                    reconfigure_Queue(val[0], mode, dialog, app)
+
+            SI_sts, error_str = smart_install.disable(mode, ui_toolkit, dialog, app, passwordObj)
+            if SI_sts != ERROR_NO_SI_DEVICE:
+                Error_Found = True
+
+            if Error_Found is False:
+                if not quiet_mode:
+                    if len(mapofDevices) == 0:
+                        msg= "No Queue(s) configured."
+                    else:
+                        msg= "Queue(s) configured correctly using HPLIP."
+                    dialog.showSuccessMessage(msg)
+        else:
+            log.warn("Could not complete Queue(s) configuration check")
+
+        cups.releaseCupsInstance()

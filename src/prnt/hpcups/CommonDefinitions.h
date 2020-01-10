@@ -56,9 +56,11 @@
 #endif
 
 #define BASIC_LOG          1
-#define SAVE_PCL_FILE      2
+#define SAVE_OUT_FILE      2
 #define SAVE_INPUT_RASTERS 4
-#define SEND_TO_PRINTER_ALSO    8
+#define SAVE_OUT_FILE_IN_BACKEND    8
+#define DONT_SEND_TO_BACKEND   16
+#define DONT_SEND_TO_PRINTER   32
 
 #define MAX_COLORTYPE 2
 #define NUMBER_PLANES 3
@@ -463,6 +465,7 @@ typedef struct JobAttributes_s
     int                integer_values[16];
     int                printer_platform_version;
     int                pre_process_raster;
+    int                HPSPDClass;
 } JobAttributes;
 
 #endif // COMMON_DEFINITIONS_H

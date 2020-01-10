@@ -21,7 +21,7 @@
 #
 #
 
-from __future__ import generators
+
 
 # Std Lib
 import sys
@@ -39,20 +39,20 @@ import errno
 import stat
 import string
 import glob
-import commands # TODO: Replace with subprocess (commands is deprecated in Python 3.0)
-import cStringIO
+import subprocess # TODO: Replace with subprocess (commands is deprecated in Python 3.0)
+import io
 import re
 import getpass
 import locale
-import htmlentitydefs
-import urllib
+from .sixext.moves import html_entities
 
 # Local
-from base.g import *
-from codes import *
-from base import utils, tui
-import pexpect
-import logger
+from .g import *
+from .codes import *
+from . import utils, tui
+from . import logger
+
+
 # System wide logger
 log = logger.Logger('', logger.Logger.LOG_LEVEL_INFO, logger.Logger.LOG_TO_CONSOLE)
 log.set_level('info')
@@ -76,7 +76,7 @@ def restart(passwordObj):
     if shutdown and passwordObj:
         cmd = "%s -r now" % (os.path.join(shutdown, "shutdown"))
         cmd = passwordObj.getAuthCmd() % cmd
-        status, output = utils.run(cmd, passwordObj)
+        status, output = utils.run(cmd, passwordObj, "Need authentication to restart system")
 
         ok = (status == 0)
     return ok
@@ -89,7 +89,7 @@ def run_open_mdns_port(core, passwordObj, callback=None):
         x = 1
         for cmd in open_mdns_port_cmd:
             cmd = passwordObj.getAuthCmd() % cmd
-            status, output = utils.run(cmd, passwordObj)
+            status, output = utils.run(cmd, passwordObj, "Need authentication to open mdns port [%s]"%cmd)
 
             if status != 0:
                 log.warn("An error occurred running '%s'" % cmd)
@@ -126,7 +126,7 @@ def run_hp_tools_with_auth(cmd, passwordObj):
         hpCommand = passwordObj.getAuthCmd() % hpCommand
 
         log.debug(hpCommand)
-        status, output = utils.run(hpCommand, passwordObj)
+        status, output = utils.run(hpCommand, passwordObj, "Need authentication to run %s command"%cmd)
         return status == 0
     else:
         log.error("Command not found or password object is not valid")
@@ -148,12 +148,12 @@ def start_service( service_name, passwordObj):
     if utils.which('systemctl'):
         cmd_status = passwordObj.getAuthCmd()%("systemctl status %s.service"%service_name)
         log.debug(cmd_status)
-        sts,out = utils.run(cmd_status, passwordObj)
+        sts,out = utils.run(cmd_status, passwordObj, "Need authentication to get %s service status"%service_name)
         if sts ==0:
             if 'stop' in out or 'inactive' in out:
                 cmd_start = passwordObj.getAuthCmd()%("systemctl start %s.service"%service_name)
                 log.debug("cmd_start=%s"%cmd_start)
-                sts,out = utils.run(cmd_start, passwordObj)
+                sts,out = utils.run(cmd_start, passwordObj, "Need authentication to start/restart %s service"%service_name)
                 if sts ==0:
                     ret_Val = True
             else:
@@ -164,12 +164,12 @@ def start_service( service_name, passwordObj):
     elif utils.which('service'):
         cmd_status = passwordObj.getAuthCmd()%("service %s status"%service_name)
         log.debug(cmd_status)
-        sts,out = utils.run(cmd_status, passwordObj)
+        sts,out = utils.run(cmd_status, passwordObj, "Need authentication to get %s service status"%service_name)
         if sts ==0:
             if 'stop' in out or 'inactive' in out:
                 cmd_start = passwordObj.getAuthCmd()%("service %s start"%service_name)
                 log.debug("cmd_start=%s"%cmd_start)
-                sts,out = utils.run(cmd_start, passwordObj)
+                sts,out = utils.run(cmd_start, passwordObj, "Need authentication to start/restart %s service"%service_name)
                 if sts ==0:
                     ret_Val = True
             elif 'unrecognized service' in out:
@@ -182,12 +182,12 @@ def start_service( service_name, passwordObj):
     elif os.path.exists('/etc/init.d/%s'%service_name):
         cmd_status = passwordObj.getAuthCmd()%('/etc/init.d/%s status'%service_name)
         log.debug(cmd_status)
-        sts,out = utils.run(cmd_status, passwordObj)
+        sts,out = utils.run(cmd_status, passwordObj, "Need authentication to get %s service status"%service_name)
         if sts ==0:
             if 'stop' in out or 'inactive' in out:
                 cmd_start = passwordObj.getAuthCmd()%('/etc/init.d/%s start'%service_name)
                 log.debug("cmd_start=%s"%cmd_start)
-                sts,out = utils.run(cmd_start, passwordObj)
+                sts,out = utils.run(cmd_start, passwordObj, "Need authentication to start/restart %s service"%service_name)
                 if sts ==0:
                     ret_Val = True
             else:
@@ -197,7 +197,7 @@ def start_service( service_name, passwordObj):
     else:
         if service_name == 'cups':
             cmd = 'lpstat -r'
-            sts,out = utils.run(cmd, passwordObj)
+            sts,out = utils.run(cmd, passwordObj, "Need authentication to get %s service status"%service_name)
             if sts ==0 and 'is running' in out:
                 ret_Val = True
             else:
@@ -234,7 +234,7 @@ def disable_SmartInstall():
             log.error("Smart Install could not be disabled\n")
     else:
         try:
-            from base import pkit
+            from . import pkit
             plugin = PLUGIN_REQUIRED
             plugin_reason = PLUGIN_REASON_NONE
             ok, sudo_ok = pkit.run_plugin_command(plugin == PLUGIN_REQUIRED, plugin_reason)
@@ -242,3 +242,39 @@ def disable_SmartInstall():
                 log.error("Failed to install plug-in.")
         except ImportError:
             log.warn("Import error\n")
+
+
+def close_running_hp_processes():
+    # check systray is running?  
+    status,output = utils.Is_Process_Running('hp-systray')
+    if status is True:
+        ok,choice = tui.enter_choice("\nSome HPLIP applications are running. Press 'y' to close applications or press 'n' to quit upgrade(y=yes*, n=no):",['y','n'],'y')
+        if not ok or choice =='n':
+            log.info("Manually close HPLIP applications and run hp-upgrade again.")
+            return False
+
+        try:
+        # dBus
+            from dbus import SystemBus, lowlevel
+        except ImportError:
+            log.error("Unable to load DBus.")
+            pass
+        else:
+            try:
+                args = ['', '', EVENT_SYSTEMTRAY_EXIT, prop.username, 0, '', '']
+                msg = lowlevel.SignalMessage('/', 'com.hplip.StatusService', 'Event')
+                msg.append(signature='ssisiss', *args)
+                log.debug("Sending close message to hp-systray ...")
+                SystemBus().send_message(msg)
+                time.sleep(0.5)
+            except:
+                log.error("Failed to send DBus message to hp-systray/hp-toolbox.")
+                pass
+
+    toolbox_status,output = utils.Is_Process_Running('hp-toolbox')
+
+    if toolbox_status is True:
+        log.error("Failed to close either HP-Toolbox/HP-Systray. Manually close and run hp-upgrade again.")
+        return False
+
+    return True

@@ -133,6 +133,8 @@ enum HPMUD_PLUGIN_TYPE
 #define HPMUD_S_LEDM_SCAN "HP-LEDM-SCAN"
 #define HPMUD_S_WIFI_CHANNEL "HP-WIFICONFIG"
 #define HPMUD_S_MARVELL_EWS_CHANNEL "HP-MARVELL-EWS"
+#define HPMUD_S_IPP_CHANNEL "HP-IPP"
+
 typedef int HPMUD_DEVICE;       /* usb, parallel or jetdirect */
 #define HPMUD_DEVICE_MAX 2      /* zero is not used */
 
@@ -548,3 +550,25 @@ enum HPMUD_RESULT hpmud_make_mdns_uri(const char *host, int port, char *uri, int
 
 #endif // _HPMUD_H
 
+/*********************** For Python 2.X and 3.X support ***************************/
+
+
+#if PY_MAJOR_VERSION >= 3
+  #define MOD_ERROR_VAL NULL
+  #define MOD_SUCCESS_VAL(val) val
+  #define MOD_INIT(name) PyMODINIT_FUNC PyInit_##name(void)
+  #define MOD_DEF(ob, name, doc, methods) \
+          static struct PyModuleDef moduledef = { \
+            PyModuleDef_HEAD_INIT, name, doc, -1, methods, }; \
+          ob = PyModule_Create(&moduledef);
+  #define FORMAT_STRING "(iy#ii)"
+  #define FORMAT_STRING1 "(iy#)"
+#else
+  #define MOD_ERROR_VAL
+  #define MOD_SUCCESS_VAL(val)
+  #define MOD_INIT(name) void init##name(void)
+  #define MOD_DEF(ob, name, doc, methods) \
+          ob = Py_InitModule3(name, methods, doc);
+  #define FORMAT_STRING "(is#ii)"
+  #define FORMAT_STRING1 "(is#)"
+#endif

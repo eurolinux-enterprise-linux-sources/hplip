@@ -20,16 +20,14 @@
 #
 
 import os
-import cStringIO
-import time
-import string
 import shutil
-import urllib # TODO: Replace with urllib2 (urllib is deprecated in Python 3.0)
 
-from base import utils, tui, os_utils
+from base import utils, tui, os_utils, validation, password
 from base.g import *
+from base.codes import *
+from base.strings import *
+from base.sixext.moves import configparser
 from installer import core_install
-from base import pexpect
 
 try:
     import hashlib # new in 2.5
@@ -48,19 +46,9 @@ PLUGIN_STATE_FILE = '/var/lib/hp/hplip.state'
 PLUGIN_FALLBACK_LOCATION = 'http://hplipopensource.com/hplip-web/plugin/'
 
 
-# Plug-in download errors
-PLUGIN_INSTALL_ERROR_NONE = 0
-PLUGIN_INSTALL_ERROR_PLUGIN_FILE_NOT_FOUND = 1
-PLUGIN_INSTALL_ERROR_DIGITAL_SIGN_NOT_FOUND = 2
-PLUGIN_INSTALL_ERROR_DIGITAL_SIGN_BAD = 3
-PLUGIN_INSTALL_ERROR_PLUGIN_FILE_CHECKSUM_ERROR = 4
-PLUGIN_INSTALL_ERROR_NO_NETWORK = 5
-PLUGIN_INSTALL_ERROR_DIRECTORY_ERROR = 6
-PLUGIN_INSTALL_ERROR_UNABLE_TO_RECV_KEYS = 7
-
 
 class PluginHandle(object):
-    def __init__(self, pluginPath = "/var/log/hp/tmp"):
+    def __init__(self, pluginPath = prop.user_dir):
         self.__plugin_path = pluginPath
         self.__required_version = ""
         self.__plugin_name = ""
@@ -98,11 +86,13 @@ class PluginHandle(object):
         # Copying plugin.spec file to home dir.
         if src_dir != HOMEDIR:
             shutil.copyfile(src_dir+"/plugin.spec", HOMEDIR+"/plugin.spec")
-            os.chmod(HOMEDIR+"/plugin.spec",0644)
+            os.chmod(HOMEDIR+"/plugin.spec",0o644)
 
         processor = utils.getProcessor()
         if processor == 'power_machintosh':
             ARCH = 'ppc'
+        elif (processor == 'armv6l' or processor == 'armv7l' or processor == 'aarch64' or processor == 'aarch32'):
+            ARCH = 'arm%d' % BITNESS
         else:
             ARCH = 'x86_%d' % BITNESS
 
@@ -173,25 +163,24 @@ class PluginHandle(object):
 
                 for src, trg, link in copies:
                     if link != "":
-                        if utils.check_library(link) == False:
+                        if not utils.check_library(link):
                             self.__plugin_state = PLUGIN_FILES_CORRUPTED
 
 
     def __getPluginInformation(self, callback=None):
-        status, url, check_sum = PLUGIN_INSTALL_ERROR_NO_NETWORK, '',''
+        status, url, check_sum = ERROR_NO_NETWORK, '',''
 
         if self.__plugin_conf_file.startswith('http://'):
             if not utils.check_network_connection():
                 log.error("Network connection not detected.")
-                return PLUGIN_INSTALL_ERROR_NO_NETWORK, '',0
+                return ERROR_NO_NETWORK, '', 0
 
         local_conf_fp, local_conf = utils.make_temp_file()
 
         try:
             try:
                 if self.__plugin_conf_file.startswith('file://'):
-                    filename, headers = urllib.urlretrieve(self.__plugin_conf_file, local_conf, callback)
-
+                    status, filename = utils.download_from_network(self.__plugin_conf_file, local_conf, True)
                 else:
                     wget = utils.which("wget", True)
                     if wget:
@@ -202,7 +191,7 @@ class PluginHandle(object):
                     else:
                         log.error("Please install wget package to download the plugin.")
                         return status, url, check_sum
-            except IOError, e:
+            except IOError as e:
                 log.error("I/O Error: %s" % e.strerror)
                 return status, url, check_sum
 
@@ -214,13 +203,13 @@ class PluginHandle(object):
                 plugin_conf_p = ConfigBase(local_conf)
                 url = plugin_conf_p.get(self.__required_version, 'url','')
                 check_sum  = plugin_conf_p.get(self.__required_version, 'checksum')
-                status = PLUGIN_INSTALL_ERROR_NONE
-            except (KeyError, ConfigParser.NoSectionError):
-                log.error("Error reading plugin.conf: Missing section [%s]" % self.__required_version)
-                return PLUGIN_INSTALL_ERROR_PLUGIN_FILE_NOT_FOUND, url, check_sum
+                status = ERROR_SUCCESS
+            except (KeyError, configparser.NoSectionError) as e:
+                log.error("Error reading plugin.conf: Missing section [%s]  Error[%s]" % (self.__required_version,e))
+                return ERROR_FILE_NOT_FOUND, url, check_sum
 
             if url == '':
-                return PLUGIN_INSTALL_ERROR_PLUGIN_FILE_NOT_FOUND, url, check_sum
+                return ERROR_FILE_NOT_FOUND, url, check_sum
 
         finally:
             os.close(local_conf_fp)
@@ -230,32 +219,18 @@ class PluginHandle(object):
 
 
     def __validatePlugin(self,plugin_file, digsig_file, req_checksum):
-        calc_checksum = get_checksum(file(plugin_file, 'r').read())
+
+        #Validate Checksum
+        calc_checksum = get_checksum(open(plugin_file, 'rb').read())
         log.debug("D/L file checksum=%s" % calc_checksum)
-
         if req_checksum and req_checksum != calc_checksum:
-            return PLUGIN_INSTALL_ERROR_PLUGIN_FILE_CHECKSUM_ERROR
+            return ERROR_CHECKSUM_ERROR, queryString(ERROR_CHECKSUM_ERROR, 0, plugin_file)
 
-        gpg = utils.which('gpg',True)
-        if gpg:
-            cmd = '%s --no-permission-warning --keyserver pgp.mit.edu --recv-keys 0xA59047B9' % gpg
-            log.info("Receiving digital keys: %s" % cmd)
-            status, output = utils.run(cmd)
-            log.debug(output)
+        #Validate Digital Signatures
+        gpg_obj = validation.GPG_Verification()
+        digsig_sts, error_str = gpg_obj.validate(plugin_file, digsig_file)
 
-            if status != 0:
-                return PLUGIN_INSTALL_ERROR_UNABLE_TO_RECV_KEYS
-
-            cmd = '%s --no-permission-warning --verify %s %s' % (gpg, digsig_file, plugin_file)
-            log.debug("Verifying plugin with digital keys: %s" % cmd)
-            status, output = utils.run(cmd)
-            log.debug(output)
-            log.debug("%s status: %d" % (gpg, status))
-
-            if status != 0:
-                return PLUGIN_INSTALL_ERROR_DIGITAL_SIGN_BAD
-
-        return PLUGIN_INSTALL_ERROR_NONE
+        return digsig_sts, error_str
 
 
     def __setPluginConfFile(self):
@@ -275,35 +250,36 @@ class PluginHandle(object):
 
 
     def download(self, pluginPath='',callback = None):
+
         core = core_install.CoreInstall()
-        sts, url, checksum = self.__getPluginInformation(callback)
 
         if pluginPath:#     and os.path.exists(pluginPath):
             src = pluginPath
             checksum = ""       # TBD: Local copy may have different checksum. So ignoring checksum
         else:
+            sts, url, checksum = self.__getPluginInformation(callback)
             src = url
-            if sts != PLUGIN_INSTALL_ERROR_NONE:
-                return sts, ""
+            if sts != ERROR_SUCCESS:
+                return sts, "", queryString(ERROR_CHECKSUM_ERROR, 0, src)
 
         log.debug("Downloading %s plug-in file from '%s' to '%s'..." % (self.__required_version, src, self.__plugin_path))
         plugin_file = os.path.join(self.__plugin_path, self.__plugin_name)
         try:
             os.umask(0)
             if not os.path.exists(self.__plugin_path):
-                os.makedirs(self.__plugin_path, 0755)
+                os.makedirs(self.__plugin_path, 0o755)
             if os.path.exists(plugin_file):
                 os.remove(plugin_file)
             if os.path.exists(plugin_file+'.asc'):
                 os.remove(plugin_file+'.asc')
 
-        except (OSError, IOError), e:
+        except (OSError, IOError) as e:
             log.error("Failed in OS operations:%s "%e.strerror)
-            return PLUGIN_INSTALL_ERROR_DIRECTORY_ERROR, ""
+            return ERROR_DIRECTORY_NOT_FOUND, "", self.__plugin_path + queryString(102)
 
         try:
             if src.startswith('file://'):
-                filename, headers = urllib.urlretrieve(src, plugin_file, callback)
+                status, filename = utils.download_from_network(src, plugin_file, True)
             else:
                 wget = utils.which("wget", True)
                 if wget:
@@ -320,18 +296,19 @@ class PluginHandle(object):
                     log.debug(cmd)
                     status, output = utils.run(cmd)
 
-                if status != 0 or os_utils.getFileSize(plugin_file) <= 0:
-                    log.error("Plug-in download is failed from both URL and fallback location.")
-                    return PLUGIN_INSTALL_ERROR_PLUGIN_FILE_NOT_FOUND, ""
 
-        except IOError, e:
+        except IOError as e:
             log.error("Plug-in download failed: %s" % e.strerror)
-            return PLUGIN_INSTALL_ERROR_PLUGIN_FILE_NOT_FOUND, ""
+            return ERROR_FILE_NOT_FOUND, "", queryString(ERROR_FILE_NOT_FOUND, 0, plugin_file)
 
-        if core.isErrorPage(file(plugin_file, 'r').read(1024)):
-            log.debug(file(plugin_file, 'r').read(1024))
+        if status !=0 or os_utils.getFileSize(plugin_file) <= 0: 
+            log.error("Plug-in download failed." ) 
+            return ERROR_FILE_NOT_FOUND, "", queryString(ERROR_FILE_NOT_FOUND, 0, plugin_file)
+
+        if core.isErrorPage(open(plugin_file, 'r').read(1024)):
+            log.debug("open(plugin_file, 'r').read(1024)")
             os.remove(plugin_file)
-            return PLUGIN_INSTALL_ERROR_PLUGIN_FILE_NOT_FOUND, ""
+            return ERROR_FILE_NOT_FOUND, "", queryString(ERROR_FILE_NOT_FOUND, 0, plugin_file)
 
         # Try to download and check the GPG digital signature
         digsig_url = src + '.asc'
@@ -341,22 +318,26 @@ class PluginHandle(object):
 
         try:
             if digsig_url.startswith('file://'):
-                filename, headers = urllib.urlretrieve(digsig_url, digsig_file, callback)
+                status, filename = utils.download_from_network(digsig_url, digsig_file, True)
             else:
                 cmd = "%s --cache=off -P %s %s" % (wget,self.__plugin_path,digsig_url)
                 log.debug(cmd)
                 status, output = utils.run(cmd)
-        except IOError, e:
+        except IOError as e:
             log.error("Plug-in GPG file [%s] download failed: %s" % (digsig_url,e.strerror))
-            return PLUGIN_INSTALL_ERROR_DIGITAL_SIGN_NOT_FOUND, plugin_file
+            return ERROR_DIGITAL_SIGN_NOT_FOUND, plugin_file, queryString(ERROR_DIGITAL_SIGN_NOT_FOUND, 0, digsig_file)
 
-        if core.isErrorPage(file(digsig_file, 'r').read(1024)):
-            log.debug(file(digsig_file, 'r').read())
+        if status !=0: 
+            log.error("Plug-in GPG file [%s] download failed." % (digsig_url))
+            return ERROR_DIGITAL_SIGN_NOT_FOUND, plugin_file, queryString(ERROR_DIGITAL_SIGN_NOT_FOUND, 0, digsig_file)
+
+        if core.isErrorPage(open(digsig_file, 'r').read(1024)):
+            log.debug(open(digsig_file, 'r').read())
             os.remove(digsig_file)
-            return PLUGIN_INSTALL_ERROR_DIGITAL_SIGN_NOT_FOUND, plugin_file
+            return ERROR_DIGITAL_SIGN_NOT_FOUND, plugin_file, queryString(ERROR_DIGITAL_SIGN_NOT_FOUND, 0, digsig_file)
 
-        sts = self.__validatePlugin(plugin_file, digsig_file, checksum)
-        return sts, plugin_file
+        sts, error_str = self.__validatePlugin(plugin_file, digsig_file, checksum)
+        return sts, plugin_file, error_str
 
 
     def run_plugin(self, plugin_file, mode=GUI_MODE):
@@ -366,21 +347,21 @@ class PluginHandle(object):
         cwd = os.getcwd()
         os.chdir(self.__plugin_path)
 
+        exec_str = sys.executable
         if mode == GUI_MODE:
-            cmd = "sh %s --keep --nox11 -- -u" % plugin_file
+            cmd = "sh %s --keep --nox11 -- -u %s" % (plugin_file, exec_str)
+            status = os_utils.execute(cmd)
         else:
-            cmd = "sh %s --keep --nox11 -- -i" % plugin_file
-
-        if os_utils.execute(cmd) == 0:
+            cmd = "sh %s --keep --nox11 -- -i %s" % (plugin_file, exec_str)
+            status = os_utils.execute(cmd)
+        if status == 0:
             result = True
         else:
             log.error("Python gobject/dbus may be not installed")
             result = False
 
-        try:
-            shutil.rmtree('./plugin_tmp')
-        except OSError:
-            log.warn("Failed to remove the temporary files")
+
+        utils.remove('./plugin_tmp')
 
         os.chdir(cwd)
         return result
@@ -405,7 +386,7 @@ class PluginHandle(object):
 
             if not os.path.exists(trg_dir):
                 log.debug("Target directory %s does not exist. Creating." % trg_dir)
-                os.makedirs(trg_dir, 0755)
+                os.makedirs(trg_dir, 0o755)
 
             if not os.path.isdir(trg_dir):
                 log.error("Target directory %s exists but is not a directory. Skipping." % trg_dir)
@@ -413,7 +394,7 @@ class PluginHandle(object):
 
             try:
                 shutil.copyfile(src, trg)
-            except (IOError, OSError), e:
+            except (IOError, OSError) as e:
                 log.error("File copy failed: %s" % e.strerror)
                 continue
 
@@ -433,7 +414,7 @@ class PluginHandle(object):
 
                     try:
                         os.symlink(trg, link)
-                    except (OSError, IOError), e:
+                    except (OSError, IOError) as e:
                         log.debug("Unable to create symlink: %s" % e.strerror)
                         pass
 
@@ -456,7 +437,7 @@ class PluginHandle(object):
         home = sys_conf.get('dirs', 'home')
         files = self.__getPluginFilesList(home)
 
-        if size(files) == 0:
+        if len(files) == 0:
             log.debug("Fail to get Plugin files list")
             return False
 

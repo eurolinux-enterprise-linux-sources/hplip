@@ -86,7 +86,9 @@ void __attribute__ ((visibility ("hidden"))) sysdump(const void *data, int size)
 int __attribute__ ((visibility ("hidden"))) is_hp(const char *id)
 {
    char *pMf;
-
+   if (id == 0 || id[0] == 0)
+        return 0;
+    
    if ((pMf = strstr(id, "MFG:")) != NULL)
       pMf+=4;
    else if ((pMf = strstr(id, "MANUFACTURER:")) != NULL)
@@ -107,6 +109,10 @@ int __attribute__ ((visibility ("hidden"))) generalize_model(const char *sz, cha
    const char *pMd=sz;
    int i, j, dd=0;
 
+   if (sz == 0 || sz[0] == 0)
+        return 0;
+
+    
    for (i=0; pMd[i] == ' ' && i < bufSize; i++);  /* eat leading white space */
 
    for (j=0; (pMd[i] != 0) && (pMd[i] != ';') && (j < bufSize); i++)
@@ -138,7 +144,10 @@ int __attribute__ ((visibility ("hidden"))) generalize_serial(const char *sz, ch
 {
    const char *pMd=sz;
    int i, j;
-
+    
+   if (sz == 0 || sz[0] == 0)
+        return 0;
+    
    for (i=0; pMd[i] == ' ' && i < bufSize; i++);  /* eat leading white space */
 
    for (j=0; (pMd[i] != 0) && (i < bufSize); i++)
@@ -159,6 +168,9 @@ int __attribute__ ((visibility ("hidden"))) get_uri_serial(const char *uri, char
    char *p;
    int i;
 
+   if (uri == 0 || uri[0] == 0)
+      return 0;
+    
    buf[0] = 0;
 
    if ((p = strcasestr(uri, "serial=")) != NULL)
@@ -214,9 +226,13 @@ enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) service_to_channel(mud
       *index = HPMUD_LEDM_SCAN_CHANNEL;
    }
    else if (strncasecmp(sn, "hp-marvell-ews", 11) == 0)
-     {
+   {
        *index = HPMUD_MARVELL_EWS_CHANNEL;
-     }
+   }
+   else if (strncasecmp(sn, "hp-ipp", 6) == 0)
+   {
+       *index = HPMUD_IPP_CHANNEL;
+   }
    /* All the following services require MLC/1284.4. */
    else if (pd->io_mode == HPMUD_RAW_MODE || pd->io_mode == HPMUD_UNI_MODE)
    {
@@ -269,12 +285,13 @@ bugout:
    return stat;
 }
 
+
 static int new_device(const char *uri, enum HPMUD_IO_MODE mode, int *result)
 {
    int index=0;      /* device[0] is unused */
    int i=1;
 
-   if (uri[0] == 0)
+   if (uri == 0 || uri[0] == 0)
       return 0;
    
    pthread_mutex_lock(&msp->mutex);
@@ -312,6 +329,7 @@ static int new_device(const char *uri, enum HPMUD_IO_MODE mode, int *result)
       index = 0;
       goto bugout;
    }
+   *result = HPMUD_R_OK;
    msp->device[i].io_mode = mode;
    msp->device[i].index = index;
    msp->device[i].channel_cnt = 0;
@@ -339,6 +357,8 @@ static int del_device(HPMUD_DEVICE index)
 int device_cleanup(mud_session *ps)
 {
    int i, dd=1;
+
+   if (!ps) return 0;
 
    if(!ps->device[dd].index)
       return 0;          /* nothing to do */
@@ -382,6 +402,9 @@ int hpmud_get_model(const char *id, char *buf, int buf_size)
 {
    char *pMd;
 
+   if (id == 0 || id[0] == 0)
+        return 0;
+    
    buf[0] = 0;
 
    if ((pMd = strstr(id, "MDL:")) != NULL)
@@ -400,6 +423,9 @@ int hpmud_get_raw_model(char *id, char *raw, int rawSize)
    char *pMd;
    int i;
 
+   if (id == 0 || id[0] == 0)
+        return 0;
+    
    raw[0] = 0;
 
    if ((pMd = strstr(id, "MDL:")) != NULL)
@@ -421,6 +447,9 @@ int hpmud_get_uri_model(const char *uri, char *buf, int buf_size)
 {
    char *p;
    int i;
+
+   if (uri == 0 || uri[0] == 0)
+     return 0;
 
    buf[0] = 0;
 
@@ -448,12 +477,17 @@ int hpmud_get_uri_datalink(const char *uri, char *buf, int buf_size)
    char ip[HPMUD_LINE_SIZE];
 #endif
 
+   if (uri == 0 || uri[0] == 0)
+     return 0;
+
    buf[0] = 0;
 
    if ((p = strcasestr(uri, "device=")) != NULL)
       p+=7;
    else if ((p = strcasestr(uri, "ip=")) != NULL)
       p+=3;
+   else if ((p = strcasestr(uri, "hostname=")) != NULL)
+      p+=9;
    else if ((p = strcasestr(uri, "zc=")) != NULL)
    {
       p+=3;
@@ -577,7 +611,9 @@ enum HPMUD_RESULT hpmud_probe_devices(enum HPMUD_BUS_ID bus, char *buf, int buf_
    int len=0;
 
    DBG("[%d] hpmud_probe_devices() bus=%d\n", getpid(), bus);
-
+   if (buf == NULL || buf_size <= 0)
+        return HPMUD_R_INVALID_LENGTH;
+    
    buf[0] = 0;
    *cnt = 0;
 
@@ -700,4 +736,3 @@ enum HPMUD_RESULT hpmud_get_dstat(HPMUD_DEVICE dd, struct hpmud_dstat *ds)
 bugout:
    return stat;
 }
-

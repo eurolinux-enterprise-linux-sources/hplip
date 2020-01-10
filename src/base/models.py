@@ -20,13 +20,12 @@
 # Author: Don Welch, Naga Samrat Chowdary Narla,
 
 # Local
-from base.g import *
-from base import utils
-
+from .g import *
+from . import utils
+from .sixext import to_unicode
 # StdLib
 import os.path
 import re
-import glob
 
 try:
     import datetime
@@ -99,17 +98,25 @@ TECH_CLASSES = [
     "Python",
     "OJ7000",
     "Pyramid",
+    "Pyramid15",
     "Python10",
     "Mimas",
+    "Mimas15",
     "StingrayOJ",
     "Copperhead",
+    "CopperheadXLP",
     "Copperhead12",
+    "CopperheadIPH",
+    "CopperheadIPH15",
+    "PyramidRefresh15",
     "Ampere",
     "Python11",
     "Saipan",
     "PyramidPlus",
+    "Hbpl1",
     "Kapan",
     "MimasTDR",
+    "Saipan15B",
 ]
 
 TECH_CLASSES.sort()
@@ -162,12 +169,20 @@ TECH_CLASS_PDLS = {
     "OJ7000"        : 'pcl3',
     "Python10"      : 'pcl3',
     "Mimas"      : 'pcl3',
+    "Mimas15"      : 'pcl3',
     "StingrayOJ"   : 'pcl3',
+    "Pyramid15"   : 'pcl3',
     "Copperhead"   : 'pcl3',
+    "CopperheadXLP"   : 'pcl3',
     "Copperhead12"   : 'pcl3',
-    "Ampere"	   : 'pcl3',
+    "CopperheadIPH"   : 'pcl3',
+    "CopperheadIPH15"   : 'pcl3',
+    "PyramidRefresh15": 'pcl3',
+    "Ampere"        : 'pcl3',
+    "Hbpl1"         : 'hbpl1',
     "Kapan"         : 'pcl3',
-    "MimasTDR"      : 'pcl3'
+    "MimasTDR"      : 'pcl3',
+    "Saipan15B"     : 'pcl3',
 }
 
 PDL_TYPE_PCL = 0  # less preferred
@@ -264,6 +279,12 @@ def normalizeModelUIName(model):
 
 
 def normalizeModelName(model):
+    if not isinstance(model, str):
+       try:
+           model = model.encode('utf-8')
+       except UnicodeEncodeError:
+          log.error("Failed to encode model = %s  type=%s "%(model,type(model)))
+
     return utils.xstrip(model.replace(' ', '_').replace('__', '_').replace('~','').replace('/', '_'), '_')
 
 
@@ -422,8 +443,8 @@ class ModelData:
             cache = self.__cache
 
         try:
-            fd = file(filename)
-        except IOError, e:
+            fd = open(filename)
+        except IOError as e:
             log.error("I/O Error: %s (%s)" % (filename, e.strerror))
             return False
 
@@ -538,7 +559,7 @@ class ModelData:
                 try:
                     return self.TYPE_CACHE[key]
                 except KeyError:
-                    for pat, typ in self.RE_FIELD_TYPES.items():
+                    for pat, typ in list(self.RE_FIELD_TYPES.items()):
                         match = pat.match(key)
                         if match is not None:
                             self.TYPE_CACHE[key] = typ

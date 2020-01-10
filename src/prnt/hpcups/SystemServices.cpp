@@ -32,17 +32,18 @@
 #include "SystemServices.h"
 #include "utils.h"
 
-SystemServices::SystemServices(int iLogLevel, int job_id) : m_iLogLevel(iLogLevel)
+SystemServices::SystemServices(int iLogLevel, int job_id, char* user_name) : m_iLogLevel(iLogLevel)
 {
     m_fp = NULL;
-    if (iLogLevel & SAVE_PCL_FILE)
+    if (iLogLevel & SAVE_OUT_FILE)
     {
-        char    fname[64];
-        sprintf(fname, "%s/hpcups_out_job%d_XXXXXX", "/var/log/hp/tmp",job_id);
-        
+        char    fname[MAX_FILE_PATH_LEN];
+        sprintf(fname, "%s/hpcups_%s_out_job%d_XXXXXX",CUPS_TMP_DIR, user_name, job_id);
         createTempFile(fname, &m_fp);
         if (m_fp)
+        {
             chmod(fname, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
+        }
     }
 }
 
@@ -59,12 +60,13 @@ DRIVER_ERROR SystemServices::Send(const BYTE *pData, int iLength)
     if (m_fp)
     {
         fwrite (pData, 1, iLength, m_fp);
-        if (!(m_iLogLevel & SEND_TO_PRINTER_ALSO))
-        {
-            return NO_ERROR;
-        }
     }
-    write (STDOUT_FILENO, pData, iLength);
+
+    if ( !(m_iLogLevel & DONT_SEND_TO_BACKEND) )
+    {
+        write (STDOUT_FILENO, pData, iLength);
+    }
+
     return NO_ERROR;
 }
 

@@ -24,7 +24,6 @@
 
   Author: Naga Samrat Chowdary Narla, Sarbeswar Meher
 \*****************************************************************************/
-
 #ifdef HAVE_LIBNETSNMP
 
 #ifndef _GNU_SOURCE
@@ -34,6 +33,7 @@
 #include <signal.h>
 #include "hpmud.h"
 #include "hpmudi.h"
+
 
 mud_device_vf __attribute__ ((visibility ("hidden"))) jd_mud_device_vf = 
 {
@@ -49,17 +49,17 @@ mud_device_vf __attribute__ ((visibility ("hidden"))) jd_mud_device_vf =
 
 static mud_channel_vf jd_channel_vf =
 {
-   .open = jd_s_channel_open,
+   .open = jd_s_channel_open, 
    .close = jd_s_channel_close,
    .channel_write = jd_s_channel_write,
    .channel_read = jd_s_channel_read
 };
 
-static const int PrintPort[] = { 0, 9100, 9101, 9102 };
-static const int ScanPort0[] = { 0, 9290, 9291, 9292 };
-static const int GenericPort[] = { 0, 9220, 9221, 9222 };
-static const int ScanPort1[] = { 0, 8290, 0, 0 };        /* hack for CLJ28xx */
-static const int GenericPort1[] = { 0, 8292, 0, 0 };     /* hack for CLJ28xx (fax) */
+static const int PrintPort[] = { 0, 9100, 9100, 9101, 9102 };
+static const int ScanPort0[] = { 0, 9290, 9290, 9291, 9292 };
+static const int GenericPort[] = { 0, 9220, 9220, 9221, 9222 };
+static const int ScanPort1[] = { 0, 8290, 8290, 0, 0 };        /* hack for CLJ28xx */
+static const int GenericPort1[] = { 0, 8292, 8292, 0, 0 };     /* hack for CLJ28xx (fax) */
 
 const char __attribute__ ((visibility ("hidden"))) *kStatusOID = "1.3.6.1.4.1.11.2.3.9.1.1.7.0";            /* device id snmp oid */
 
@@ -79,19 +79,19 @@ static int ReadReply(mud_channel *pc)
    return num;
 }
 
-static int device_id(const char *ip, int port, char *buffer, int size)
+static int device_id(const char *iporhostname, int port, char *buffer, int size)
 {
    int len=0, maxSize, result, dt, status;
-   int public_comunity_index = 4; //By default we need to pass community name = "public"
 
    maxSize = (size > 1024) ? 1024 : size;   /* RH8 has a size limit for device id */
 
-   if ((len = GetSnmp(ip, public_comunity_index, (char *)kStatusOID, (unsigned char *)buffer, maxSize, &dt, &status, &result)) == 0)
-   {
-      if ((len = GetSnmp(ip, port, (char *)kStatusOID, (unsigned char *)buffer, maxSize, &dt, &status, &result)) == 0)
-      {
-          BUG("unable to read device-id\n");
-      }
+   if ((len = GetSnmp(iporhostname, port, (char *)kStatusOID, (unsigned char *)buffer, maxSize, &dt, &status, &result)) == 0)
+   {       
+        //Try one more time with previous default community name string "public.1" which was used for old HP printers.  
+       if ((len = GetSnmp(iporhostname, PORT_PUBLIC_1, (char *)kStatusOID, (unsigned char *)buffer, maxSize, &dt, &status, &result)) == 0)
+       {
+            BUG("unable to read device-id\n");
+       }
    }
 
    return len; /* length does not include zero termination */
@@ -171,8 +171,9 @@ enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) jd_open(mud_device *pd
       if ((p = strcasestr(pd->uri, "port=")) != NULL)
          pd->port = strtol(p+5, &tail, 10);
       else
-         pd->port = 1;
-      if (pd->port > 3)
+         pd->port = PORT_PUBLIC;
+
+      if (pd->port > PORT_PUBLIC_3)
       {
          stat = HPMUD_R_INVALID_IP_PORT;
          BUG("invalid ip port=%d\n", pd->port);
@@ -316,14 +317,28 @@ enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) jd_channel_close(mud_d
 enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) jd_s_channel_open(mud_channel *pc)
 {
    mud_device *pd = &msp->device[pc->dindex];
-   struct sockaddr_in pin;  
+   struct sockaddr_in pin,tmp_pin;  
+   struct hostent *he;
    char buf[HPMUD_LINE_SIZE];
    int r, len, port;
    enum HPMUD_RESULT stat = HPMUD_R_IO_ERROR;
 
+   bzero(&tmp_pin, sizeof(tmp_pin)); 
    bzero(&pin, sizeof(pin));  
    pin.sin_family = AF_INET;  
-   pin.sin_addr.s_addr = inet_addr(pd->ip);  
+
+   if(inet_pton(AF_INET, pd->ip, &(tmp_pin.sin_addr))) //Returns 0 when IP is invalid.
+        pin.sin_addr.s_addr = inet_addr(pd->ip);  
+   else
+   {
+        if((he=gethostbyname(pd->ip)) == NULL)
+        {
+            BUG("gethostbyname() returned NULL\n");
+            goto bugout;  
+        }
+
+        pin.sin_addr = *((struct in_addr *)he->h_addr);
+   }
 
    switch (pc->index)
    {
@@ -486,6 +501,20 @@ enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) jd_s_channel_open(mud_
             goto bugout;
          }
          break;            
+      case HPMUD_IPP_CHANNEL:
+         port = 631;
+         pin.sin_port = htons(port);
+         if ((pc->socket = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+         {
+            BUG("unable to open ipp port %d: %m %s\n", port, pd->uri);
+            goto bugout;
+         }
+         if (connect(pc->socket, (struct sockaddr *)&pin, sizeof(pin)) == -1)
+         {
+            BUG("unable to connect to ipp port %d: %m %s\n", port, pd->uri);
+            goto bugout;
+         }
+         break;
       case HPMUD_MARVELL_FAX_CHANNEL:
          port = 8285;  
          pin.sin_port = htons(port);
@@ -655,7 +684,10 @@ static int convert_name_to_dns(const char *name, int name_size, unsigned char *d
    int i, x=0;
    unsigned char *p=dns_name;
 
-   for (i=0; i<name_size; i++)
+   if (name == 0 || name[0] == 0)
+        return 0;
+
+   for (i=0; i<name_size && name[i]; i++)
    {
       if (name[i]=='.')
       {
@@ -668,14 +700,13 @@ static int convert_name_to_dns(const char *name, int name_size, unsigned char *d
 
    if (i)
    {
-      i--;
       *p++ = i-x;     /* length */
       for (; x<i; x++)
          *p++ = name[x]; 
       x++;
    }
 
-   dns_name[x++]=0;
+   p[x++]=0;
 
    return x;   /* return length DOES include null termination */
 }
@@ -703,6 +734,9 @@ enum HPMUD_RESULT hpmud_mdns_lookup(const char *host_name, int sec_timeout, char
    enum HPMUD_RESULT stat = HPMUD_R_IO_ERROR;
 
    DBG("mdns lookup '%s'\n", host_name);
+
+   if(host_name == 0 || host_name[0] == 0)
+        return HPMUD_R_INVALID_MDNS;
 
    if ((udp_socket = socket(AF_INET, SOCK_DGRAM, 0)) == -1)
    {
@@ -771,6 +805,8 @@ enum HPMUD_RESULT hpmud_mdns_lookup(const char *host_name, int sec_timeout, char
 
       readfd = master;
       ret = select(maxfd+1, &readfd, NULL, NULL, &tmo);
+      BUG("In while after select ret=%d maxfd=%d tmo=%d\n", ret, maxfd, tmo);
+
       if (ret < 0)
       {
          BUG("error mdns lookup %s: %m\n", host);
@@ -833,7 +869,7 @@ enum HPMUD_RESULT hpmud_make_net_uri(const char *ip, int port, char *uri, int ur
 
    uri[0]=0;
 
-   if (ip[0]==0)
+   if (ip == 0 || ip[0]==0)
    {
       BUG("invalid ip %s\n", ip);
       stat = HPMUD_R_INVALID_IP;
@@ -843,7 +879,7 @@ enum HPMUD_RESULT hpmud_make_net_uri(const char *ip, int port, char *uri, int ur
    if (device_id(ip, port, id, sizeof(id)) > 0 && is_hp(id))
    {
       hpmud_get_model(id, model, sizeof(model));
-      if (port == 1)
+      if (port == PORT_PUBLIC)
          *bytes_read = snprintf(uri, uri_size, "hp:/net/%s?ip=%s", model, ip); 
       else
          *bytes_read = snprintf(uri, uri_size, "hp:/net/%s?ip=%s&port=%d", model, ip, port); 
@@ -874,7 +910,7 @@ enum HPMUD_RESULT hpmud_make_mdns_uri(const char *host, int port, char *uri, int
 
    uri[0]=0;
 
-   if (host[0]==0)
+   if (host == 0 || host[0]==0)
    {
       BUG("invalid host %s\n", host);
       stat = HPMUD_R_INVALID_MDNS;
@@ -908,5 +944,9 @@ enum HPMUD_RESULT hpmud_make_mdns_uri(const char *host, int port, char *uri, int
 bugout:
    return stat;
 }
-
 #endif  /* HAVE_LIBNETSNMP */
+
+
+
+
+

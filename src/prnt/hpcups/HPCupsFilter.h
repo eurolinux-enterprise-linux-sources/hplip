@@ -96,10 +96,9 @@ private:
     DBusCommunicator m_DBusComm;
 	
 private:
-
     void            closeFilter();
     void            cleanup();
-    void            getLogLevel();
+    //void            getLogLevel();
     DRIVER_ERROR    startPage (cups_page_header2_t *header);
     int             processRasterData(cups_raster_t *cups_raster);
     void            extractBlackPixels(cups_page_header2_t *cups_header,
@@ -119,6 +118,11 @@ private:
     BYTE   *color_raster;
     BITMAPFILEHEADER    bmfh;
     BITMAPINFOHEADER    bmih;
+
+#ifdef UNITTESTING
+    friend class TestHPCupsFilter;
+#endif
+
 };
 
 #endif  // HP_CUPSFILTER_H

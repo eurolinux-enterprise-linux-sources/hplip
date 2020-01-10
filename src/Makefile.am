@@ -10,6 +10,7 @@ CXXFLAGS+= -DCONFDIR=\"$(hplip_confdir)\"
 hplipdir = $(datadir)/hplip
 
 docdir = $(hpdocdir)
+htmldir = $(hphtmldir)
 doc_DATA = COPYING copyright prnt/hpijs/README_LIBJPG
 EXTRA_DIST = prnt/hpijs/gdevijs-krgb-1.5-gs8.61.patch prnt/hpijs/README_LIBJPG copyright
 
@@ -24,11 +25,11 @@ include cups_drv.inc
 
 if DOC_BUILD
 wwwsrc = doc
-www0dir = $(docdir)
+www0dir = $(htmldir)
 dist_www0_DATA = $(wwwsrc)/index.html $(wwwsrc)/commandline.html $(wwwsrc)/copying.html $(wwwsrc)/devicemanager.html $(wwwsrc)/faxtrouble.html $(wwwsrc)/gettinghelp.html $(wwwsrc)/hpscan.html $(wwwsrc)/mainttask.html $(wwwsrc)/plugins.html $(wwwsrc)/print.html $(wwwsrc)/printing.html $(wwwsrc)/printoptions.html $(wwwsrc)/printtroubleshooting.html $(wwwsrc)/scanning.html $(wwwsrc)/scantrouble.html $(wwwsrc)/sendfax.html $(wwwsrc)/setup.html $(wwwsrc)/systray.html $(wwwsrc)/troubleshooting.html $(wwwsrc)/uninstalling.html $(wwwsrc)/upgrading.html
-www3dir = $(docdir)/styles
+www3dir = $(htmldir)/styles
 dist_www3_DATA = $(wwwsrc)/styles/*
-www4dir = $(docdir)/images
+www4dir = $(htmldir)/images
 dist_www4_DATA = $(wwwsrc)/images/*
 endif
 
@@ -58,9 +59,9 @@ else
 libsane_hpaio_la_LDFLAGS = -version-info 1:0:0
 endif
 # The following is a interlibrary dependency that must be compiled first.
-libsane_hpaio_la_LIBADD = libhpip.la libhpmud.la $(DBUS_LIBS) -lcups -ldl
+libsane_hpaio_la_LIBADD = libhpip.la libhpmud.la libhpipp.la $(DBUS_LIBS) -lcups -ldl
 #libsane_hpaio_la_CFLAGS = -DWITH_NONAMESPACES -DSOAP_DEBUG
-libsane_hpaio_la_CFLAGS = $(DBUS_CFLAGS)
+libsane_hpaio_la_CFLAGS = $(DBUS_CFLAGS) -Iprotocol
 endif # SCAN_BUILD
 
 # hpmud library
@@ -102,12 +103,6 @@ libhpip_la_SOURCES = ip/xconvolve.c ip/xfax.c ip/xgrayout.c ip/xjpg_dct.c ip/xjp
 	ip/xbi2gray.c ip/xcolrspc.c ip/xfakemono.c ip/xgray2bi.c ip/xinvert.c ip/xjpg_enc.c ip/xmatrix.c ip/xpnm.c ip/xscale.c ip/xthumb.c ip/xyxtract.c \
 	ip/hpip.h ip/ipdefs.h ip/xform.h ip/xjpg_dct.h ip/xjpg_huf.h ip/xjpg_mrk.h
 
-# hp-mkuri.
-hp_mkuridir = $(bindir)
-hp_mkuri_PROGRAMS = hp-mkuri
-hp_mkuri_SOURCES = io/hpmud/hp-mkuri.c
-hp_mkuri_LDADD = -ldl libhpmud.la
-hp_mkuri_CFLAGS = -DCONFDIR=\"$(hplip_confdir)\"
 
 #hpmud rules data dir
 rulessystemdir=/usr/lib/systemd/system
@@ -136,10 +131,6 @@ pstotiff_SCRIPTS = fax/filters/pstotiff
 hplip_statedir = /var/lib/hp
 dist_hplip_state_DATA =
 
-# Log Files
-hplip_Logdir=/var/log/hp
-hplip_tmpdir=/var/log/hp/tmp
-
 if FULL_BUILD
 
 dist_hplip_SCRIPTS = hpssd.py __init__.py hpdio.py
@@ -162,9 +153,13 @@ basedir = $(hplipdir)/base
 dist_base_DATA = base/maint.py base/codes.py base/g.py base/pml.py base/status.py  \
 	base/__init__.py base/mfpdtf.py base/utils.py base/wifi.py base/LedmWifi.py \
 	base/device.py base/logger.py base/slp.py base/exif.py base/strings.py base/magic.py \
-	base/imagesize.py base/pexpect.py base/models.py base/mdns.py base/tui.py base/dime.py \
-	base/ldif.py base/vcard.py base/module.py base/pkit.py base/queues.py base/password.py \
-	base/services.py base/os_utils.py base/smart_install.py
+	base/imagesize.py base/models.py base/validation.py base/sixext.py base/avahi.py \
+	base/mdns.py base/tui.py base/dime.py base/ldif.py base/vcard.py base/module.py \
+	base/pkit.py base/queues.py base/password.py base/services.py base/os_utils.py \
+	base/smart_install.py base/six.py
+
+basepexpectdir = $(hplipdir)/base/pexpect
+dist_basepexpect_DATA=base/pexpect/__init__.py
 
 # installer
 installdir = $(hplipdir)/installer
@@ -215,8 +210,6 @@ postscriptdir = $(hplipdir)/data/ps
 localzdir = $(hplipdir)/data/localization
 dist_postscript_DATA = data/ps/testpage.ps.gz data/ps/clean_page.pdf.gz
 dist_models_DATA = data/models/models.dat
-dist_hplip_Log_DATA=
-dist_hplip_tmp_DATA=
 
 if GUI_BUILD
 dist_images_16x16_DATA = data/images/16x16/*
@@ -255,13 +248,24 @@ pcardext_la_CFLAGS = -I$(PYTHONINCLUDEDIR)
 prntdir = $(hplipdir)/prnt
 dist_prnt_DATA = prnt/cups.py prnt/__init__.py prnt/ldl.py prnt/pcl.py prnt/colorcal.py
 
+
+# IPP library
+lib_LTLIBRARIES += libhpipp.la
+#hpipp_LTLIBRARIES = hpipp.la
+#hpipp_la_LDFLAGS = -module -avoid-version
+libhpipp_la_SOURCES = protocol/hp_ipp.c protocol/hp_ipp.h protocol/hp_ipp_i.h
+libhpipp_la_CFLAGS = -DCONFDIR=\"$(hplip_confdir)\"
+libhpipp_la_LDFLAGS = -version-info 0:1:0
+libhpipp_la_LIBADD = libhpmud.la
+
+
 # cupsext
 cupsextdir = $(pyexecdir)
 cupsext_LTLIBRARIES = cupsext.la
 cupsext_la_LDFLAGS = -module -avoid-version
-cupsext_la_SOURCES =  prnt/cupsext/cupsext.c
-cupsext_la_CFLAGS = -I$(PYTHONINCLUDEDIR)
-cupsext_la_LIBADD = -lcups
+cupsext_la_SOURCES =  prnt/cupsext/cupsext.c prnt/cupsext/cupsext.h
+cupsext_la_CFLAGS = -I$(PYTHONINCLUDEDIR) -Iprotocol
+cupsext_la_LIBADD = -lcups libhpipp.la
 
 if SCAN_BUILD
 # scan
@@ -380,16 +384,6 @@ hplip_systraydir = $(systraydir)
 hplip_systray_DATA = hplip-systray.desktop
 endif
 
-# hpipjs (CUPS filter)
-hplipjsdir = $(cupsfilterdir)
-hplipjs_PROGRAMS = hplipjs
-hplipjs_SOURCES = prnt/filters/hplipjs.c
-
-
-# hpcac (CUPS filter, Color Access Control, ie: CLJ 4700)
-cacdir = $(cupsfilterdir)
-dist_cac_SCRIPTS = prnt/filters/hpcac
-
 # hpps (Finishing PS filter)
 findir = $(cupsfilterdir)
 dist_fin_SCRIPTS = prnt/filters/hpps
@@ -501,6 +495,7 @@ hpcups_SOURCES = prnt/hpcups/HPCupsFilter.cpp prnt/hpcups/HPCupsFilter.h prnt/hp
 
 hpcups_CXXFLAGS = $(APDK_ENDIAN_FLAG) $(DBUS_CFLAGS)
 hpcups_LDADD = -ljpeg -ldl -lcups -lcupsimage $(DBUS_LIBS)
+
 #else
 #hpcupsdir = $(cupsfilterdir)
 #hpcups_PROGRAMS = hpcups
@@ -541,31 +536,6 @@ if CUPS_DRV_INSTALL
 cupsdrv2dir = $(drvdir)
 cupsdrv2_DATA = $(cups_drv)
 endif
-
-
-install-dist_hplip_LogDATA:
-if FULL_BUILD
-	test -z "$(DESTDIR)$(hplip_Logdir)" || mkdir -p $(DESTDIR)$(hplip_Logdir)
-	chgrp "lp" -R $(DESTDIR)$(hplip_Logdir)
-	chmod 775 $(DESTDIR)$(hplip_Logdir)
-endif	#FULL_BUILD
-if HPLIP_BUILD
-	test -z "$(DESTDIR)$(hplip_Logdir)" || mkdir -p $(DESTDIR)$(hplip_Logdir)
-	chgrp "lp" -R $(DESTDIR)$(hplip_Logdir)
-	chmod 775 $(DESTDIR)$(hplip_Logdir)
-endif	#FULL_BUILD
-
-install-dist_hplip_tmpDATA:
-if FULL_BUILD
-	test -z "$(DESTDIR)$(hplip_tmpdir)" || mkdir -p $(DESTDIR)$(hplip_tmpdir)
-	chgrp "lp" -R $(DESTDIR)$(hplip_tmpdir)
-	chmod 0775 $(DESTDIR)$(hplip_tmpdir)
-endif	#FULL_BUILD
-if HPLIP_BUILD
-	test -z "$(DESTDIR)$(hplip_tmpdir)" || mkdir -p $(DESTDIR)$(hplip_tmpdir)
-	chgrp "lp" -R $(DESTDIR)$(hplip_tmpdir)
-	chmod 0775 $(DESTDIR)$(hplip_tmpdir)
-endif	#FULL_BUILD
 
 install-data-hook:
 if HPLIP_BUILD

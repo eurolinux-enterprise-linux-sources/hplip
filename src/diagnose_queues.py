@@ -19,7 +19,7 @@
 #
 # Author: Amarnath Chitumalla
 #
-
+from __future__ import print_function
 __version__ = '1.1'
 __title__ = 'AutoConfig Utility to check queues configuration'
 __mod__ = 'hp-daignose-queues'
@@ -67,7 +67,7 @@ try:
                       handle_device_printer=False)
 
 
-    except getopt.GetoptError, e:
+    except getopt.GetoptError as e:
         log.error(e.msg)
         usage()
         sys.exit(1)
@@ -88,7 +88,7 @@ try:
             usage('man')
 
         elif o == '--help-desc':
-            print __doc__,
+            print(__doc__, end=' ')
             sys.exit(0)
 
         elif o in ('-l', '--logging'):
@@ -106,7 +106,7 @@ try:
         utils.log_title(__title__, __version__)
         
     mod.lockInstance(__mod__, True)
-    log_file = os.path.normpath('/var/log/hp/hplip_queues.log')
+    log_file = os.path.normpath('%s/hplip_queues.log'%prop.user_dir)
     log.debug(log.bold("Saving output in log file: %s" % log_file))
     if os.path.exists(log_file):
         try:
@@ -117,7 +117,7 @@ try:
     log.set_where(log.LOG_TO_CONSOLE_AND_FILE)
 
     passwordObj = password.Password(mode)
-    queues.main_function(passwordObj, mode,ui_toolkit, quiet_mode, True )
+    queues.main_function(passwordObj, mode,ui_toolkit, quiet_mode )
     
                
 except KeyboardInterrupt:

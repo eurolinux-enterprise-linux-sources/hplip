@@ -21,11 +21,12 @@
 
 from base.g import *
 from base import device, utils
+from base.sixext import  to_unicode
 from installer import pluginhandler
 
 
 from qt import *
-from pluginform2_base import PluginForm2_base
+from .pluginform2_base import PluginForm2_base
 import signal
 
 class PluginForm2(PluginForm2_base):
@@ -51,10 +52,10 @@ class PluginForm2(PluginForm2_base):
             self.actionPushButton.setEnabled(True)
             self.path = None
         else: # path
-            self.path = unicode(self.pathLineEdit.text())
+            self.path = to_unicode(self.pathLineEdit.text())
             self.pathLineEdit.emit(SIGNAL("textChanged(const QString&)"), (self.path,))
 
-            if self.path.startswith(u"http://"):
+            if self.path.startswith("http://"):
                 self.actionPushButton.setText(self.__tr("Download and Install"))
             else:
                 self.actionPushButton.setText(self.__tr("Copy and Install"))
@@ -70,19 +71,19 @@ class PluginForm2(PluginForm2_base):
 
         if dlg.exec_loop() == QDialog.Accepted:
             results = dlg.selectedFile()
-            working_directory = unicode(dlg.dir().absPath())
+            working_directory = to_unicode(dlg.dir().absPath())
             log.debug("results: %s" % results)
             user_conf.setWorkingDirectory(working_directory)
 
             if results:
-                self.path = unicode(results)
+                self.path = to_unicode(results)
                 self.pathLineEdit.setText(self.path)
 
 
     def pathLineEdit_textChanged(self, path):
-        path, ok = unicode(path), True
+        path, ok = to_unicode(path), True
 
-        if not path.startswith(u'http://'):
+        if not path.startswith('http://'):
             self.actionPushButton.setText(self.__tr("Copy and Install"))
 
             if not path or not os.path.exists(path):
@@ -127,33 +128,12 @@ class PluginForm2(PluginForm2_base):
 
         log.info("Downloading plug-in from: %s" % self.path)
 
-        status, self.path = self.pluginObj.download(self.path, self.plugin_download_callback)
+        status, self.path, error_str = self.pluginObj.download(self.path, self.plugin_download_callback)
 
-        if status != pluginhandler.PLUGIN_INSTALL_ERROR_NONE:
-
-            if status == pluginhandler.PLUGIN_INSTALL_ERROR_PLUGIN_FILE_NOT_FOUND:
-                desc = self.__tr("<b>ERROR: Plug-in file not found (server returned 404 or similar error).")
-
-            elif status == pluginhandler.PLUGIN_INSTALL_ERROR_DIGITAL_SIGN_NOT_FOUND:
-                desc = self.__tr("<b>ERROR: Plug-in digital signature file not found (server returned 404 or similar error).")
-
-            elif status == pluginhandler.PLUGIN_INSTALL_ERROR_DIGITAL_SIGN_BAD:
-                desc = self.__tr("<b>ERROR: Plug-in file does not match its digital signature.</b><p>File may have been corrupted or altered.")
-
-            elif status == pluginhandler.PLUGIN_INSTALL_ERROR_PLUGIN_FILE_CHECKSUM_ERROR:
-                desc = self.__tr("<b>ERROR: Plug-in file does not match its checksum. File may have been corrupted or altered.")
-
-            elif status == pluginhandler.PLUGIN_INSTALL_ERROR_NO_NETWORK:
-                desc = self.__tr("<b>ERROR: Unable to connect to network to download the plug-in.</b><p>Please check your network connection and try again.</p>")
-
-            elif status == pluginhandler.PLUGIN_INSTALL_ERROR_DIRECTORY_ERROR:
-                desc = self.__tr("<b>ERROR: Unable to create the plug-in directory.</b><p>Please check your permissions and try again.</p>")
-
-            elif status == pluginhandler.PLUGIN_INSTALL_ERROR_UNABLE_TO_RECV_KEYS:
-                desc = self.__tr("<b>ERROR: Unable to download the public HPLIP keys from the keyserver.")
+        if status != ERROR_SUCCESS:
 
             self.pluginObj.deleteInstallationFiles(self.path)
-            self.FailureUI(desc)
+            self.FailureUI(error_str)
             self.close()
             return
 
@@ -212,7 +192,7 @@ class PluginForm2(PluginForm2_base):
 
 
     def plugin_install_callback(self, s):
-        print s
+        print(s)
 
 
     def cancelPushButton_clicked(self):

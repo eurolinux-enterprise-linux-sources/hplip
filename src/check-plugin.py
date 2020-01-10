@@ -20,11 +20,12 @@
 # Author: Suma Byrappa, Amarnath Chitumalla
 #
 #
-
+from __future__ import print_function
 __version__ = '1.1'
 __title__ = 'AutoConfig Utility for Plug-in Installation'
 __mod__ = 'hp-check-plugin'
 __doc__ = "Auto config utility for HPLIP supported multifunction Devices for installing proprietary plug-ins."
+
 
 # Std Lib
 import sys
@@ -45,7 +46,7 @@ from installer import pluginhandler
 username = ""
 device_uri = ""
 printer_name = ""
-LOG_FILE = "/var/log/hp/hplip_ac.log"
+LOG_FILE = "%s/hplip_ac.log"%prop.user_dir
 DBUS_SERVICE='com.hplip.StatusService'
 
 ##### METHODS #####
@@ -92,13 +93,13 @@ def install_Plugin(systray_running_status, run_directly=False):
 #Installs/Uploads the firmware to device once plugin installation is completed.
 def install_firmware(pluginObj,Plugin_Installation_Completed, USB_param):
     #timeout check for plugin installation
-    sleep_timeout = 6000	# 10 mins time out
+    sleep_timeout = 6000    # 10 mins time out
     while Plugin_Installation_Completed is False and sleep_timeout != 0:
-	time.sleep(0.3)	#0.3 sec delay
-	sleep_timeout = sleep_timeout -3
+        time.sleep(0.3) #0.3 sec delay
+        sleep_timeout = sleep_timeout -3
 
-	ps_plugin,output = utils.Is_Process_Running('hp-plugin')
-	ps_diagnose_plugin,output = utils.Is_Process_Running('hp-diagnose_plugin')
+        ps_plugin,output = utils.Is_Process_Running('hp-plugin')
+        ps_diagnose_plugin,output = utils.Is_Process_Running('hp-diagnose_plugin')
 
         if ps_plugin is False and ps_diagnose_plugin is False:
             Plugin_Installation_Completed = True
@@ -164,7 +165,7 @@ try:
     opts, device_uri, printer_name, mode, ui_toolkit, loc = \
          mod.parseStdOpts('l:hHuUmMfFpPgG',['gui','help', 'help-rest', 'help-man', 'help-desc','logging='],handle_device_printer=False)
 
-except getopt.GetoptError, e:
+except getopt.GetoptError as e:
         log.error(e.msg)
         usage()
         sys.exit(1)
@@ -198,7 +199,7 @@ for o, a in opts:
 #        GUI_Mode = False
 
     elif o == '--help-desc':
-        print __doc__,
+        print(__doc__, end=' ')
         sys.exit(0)
 
     elif o in ('-l', '--logging'):
@@ -234,15 +235,6 @@ if os.path.exists(LOG_FILE):
 
 log.set_logfile(LOG_FILE)
 log.set_where(log.LOG_TO_CONSOLE_AND_FILE)
-cmd="chmod 664 "+LOG_FILE
-sts,output = utils.run(cmd)
-if sts != 0:
-    log.debug("Failed to change log file permissions: %s" %output)
-
-cmd="chgrp lp "+LOG_FILE
-sts,output = utils.run(cmd)
-if sts != 0:
-    log.debug("Failed to change log file group permissions: %s" %output)
 
 log.debug(" hp-check-plugin started")
 
@@ -309,7 +301,7 @@ if Systray_Msg_Enabled:
 
 elif Plugin_option_Enabled:
     if not Is_Plugin_Already_Installed:
-        install_Plugin (Systray_Is_Running, True)		# needs to run hp-plugin without usig systray
+        install_Plugin (Systray_Is_Running, True)        # needs to run hp-plugin without usig systray
 
 if Firmware_Option_Enabled:
     if Is_Plugin_Already_Installed is False:

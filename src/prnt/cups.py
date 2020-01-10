@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
 # (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
@@ -25,13 +26,13 @@ import os.path
 import gzip
 import re
 import time
-import urllib
 import tempfile
 import glob
 
 # Local
 from base.g import *
 from base import utils, models, os_utils
+from base.sixext import PY3
 
 INVALID_PRINTER_NAME_CHARS = """~`!@#$%^&*()=+[]{}()\\/,.<>?'\";:| """
 
@@ -53,22 +54,9 @@ try:
 
     os.environ['LANG'] = newlang
 
-    # the same works for LC_CTYPE, in case it's not set
-    current_ctype = os.getenv("LC_CTYPE")
-    newctype = "C"
-
-    if current_ctype is not None and current_ctype.count('.'):
-        newctype, encoding = current_ctype.split('.')
-        newctype += ".UTF-8"
-
-    os.environ['LC_CTYPE'] = newctype
-
     import cupsext
 
     # restore the old env values
-    if current_ctype is not None:
-        os.environ['LC_CTYPE'] = current_ctype
-
     if current_language is not None:
         os.environ['LANG'] = current_language
 
@@ -217,7 +205,7 @@ def getAllowableMIMETypes():
         files.extend(glob.glob(path))
     for f in files:
         #log.debug( "Capturing allowable MIME types from: %s" % f )
-        conv_file = file(f, 'r')
+        conv_file = open(f, 'r')
 
         for line in conv_file:
             if not line.startswith("#") and len(line) > 1:
@@ -242,10 +230,10 @@ def getPPDDescription(f):
     if f.endswith('.gz'):
         nickname = gzip.GzipFile(f, 'r').read(4096)
     else:
-        nickname = file(f, 'r').read(4096)
+        nickname = open(f, 'r').read(4096)
 
     try:
-        desc = nickname_pat.search(nickname).group(1)
+        desc = nickname_pat.search(nickname.decode('utf-8')).group(1)
     except AttributeError:
         desc = ''
 
@@ -334,7 +322,7 @@ def levenshtein_distance(a,b):
         a,b = b,a
         n,m = m,n
 
-    current = range(n+1)
+    current = list(range(n+1))
     for i in range(1,m+1):
         previous, current = current, [i]+[0]*m
 
@@ -358,7 +346,7 @@ STRIP_STRINGS2 = ['foomatic:', 'hp-', 'hp_', 'hp ', '.gz', '.ppd',
                  '-jr', '-lidl', '-lidil', '-ldl', '-hpijs']
 
 
-for p in models.TECH_CLASS_PDLS.values():
+for p in list(models.TECH_CLASS_PDLS.values()):
     pp = '-%s' % p
     if pp not in STRIP_STRINGS2:
         STRIP_STRINGS2.append(pp)
@@ -393,7 +381,7 @@ def getPPDFile(stripped_model, ppds): # Old PPD find
     log.debug("1st stage edit distance match")
     mins = {}
     eds = {}
-    min_edit_distance = sys.maxint
+    min_edit_distance = sys.maxsize
 
     log.debug("Determining edit distance from %s (only showing edit distances < 4)..." % stripped_model)
     for f in ppds:
@@ -503,7 +491,7 @@ def getPPDFile2(mq,model, ppds): # New PPD find
     if num_matches == 0:
         log.debug("No PPD found for model %s using new algorithm. Trying old algorithm..." % stripped_model)
         #Using Old algo, ignores the series keyword in ppd searching.
-        matches2 = getPPDFile(stripModel(stripped_model), ppds).items()
+        matches2 = list(getPPDFile(stripModel(stripped_model), ppds).items())
         log.debug(matches2)
         num_matches2 = len(matches2)
         if num_matches2:
@@ -618,7 +606,7 @@ def getFaxPPDFile(mq, model):
 def getErrorLogLevel():
     cups_conf = '/etc/cups/cupsd.conf'
     try:
-        f = file(cups_conf, 'r')
+        f = open(cups_conf, 'r')
     except OSError:
         log.error("%s not found." % cups_conf)
     except IOError:
@@ -644,13 +632,13 @@ def getPrintJobErrorLog(job_id, max_lines=1000, cont_interval=5):
     #if level in ('debug', 'debug2'):
     if 1:
         try:
-            f = file(cups_conf, 'r')
+            f = open(cups_conf, 'r')
         except (IOError, OSError):
             log.error("Could not open the CUPS error_log file: %s" % cups_conf)
             return ''
 
         else:
-            if s in file(cups_conf, 'r').read():
+            if s in open(cups_conf, 'r').read():
                 queue = utils.Queue()
                 job_found = False
 
@@ -689,27 +677,27 @@ def getDefaultPrinter():
     return r
 
 def setDefaultPrinter(printer_name):
-    setPasswordPrompt("You do not have permission to set the default printer.")
+    setPasswordPrompt("You do not have permission to set the default printer. You need authentication.")
     return cupsext.setDefaultPrinter(printer_name)
 
 def accept(printer_name):
-    setPasswordPrompt("You do not have permission to accept jobs on a printer queue.")
+    setPasswordPrompt("You do not have permission to accept jobs on a printer queue. You need authentication.")
     return controlPrinter(printer_name, CUPS_ACCEPT_JOBS)
 
 def reject(printer_name):
-    setPasswordPrompt("You do not have permission to reject jobs on a printer queue.")
+    setPasswordPrompt("You do not have permission to reject jobs on a printer queue. You need authentication.")
     return controlPrinter(printer_name, CUPS_REJECT_JOBS)
 
 def start(printer_name):
-    setPasswordPrompt("You do not have permission to start a printer queue.")
+    setPasswordPrompt("You do not have permission to start a printer queue. You need authentication.")
     return controlPrinter(printer_name, IPP_RESUME_PRINTER)
 
 def stop(printer_name):
-    setPasswordPrompt("You do not have permission to stop a printer queue.")
+    setPasswordPrompt("You do not have permission to stop a printer queue. You need authentication.")
     return controlPrinter(printer_name, IPP_PAUSE_PRINTER)
 
 def purge(printer_name):
-    setPasswordPrompt("You do not have permission to purge jobs.")
+    setPasswordPrompt("You do not have permission to purge jobs. You need authentication.")
     return controlPrinter(printer_name, IPP_PURGE_JOBS)
 
 def controlPrinter(printer_name, cups_op):
@@ -770,7 +758,7 @@ def getServer():
     return cupsext.getServer()
 
 def cancelJob(jobid, dest=None):
-    setPasswordPrompt("You do not have permission to cancel a job.")
+    setPasswordPrompt("You do not have permission to cancel a job. You need authentication.")
     if dest is not None:
         return cupsext.cancelJob(dest, jobid)
     else:
@@ -790,17 +778,23 @@ def addOption(option):
 def getOptions():
     return cupsext.getOptions()
 
+def duplicateSection(section):
+    return cupsext.duplicateSection(section)
+
 def printFile(printer, filename, title):
     if os.path.exists(filename):
-	printer = printer.encode('utf-8')
-	filename = filename.encode('utf-8')
-	title = title.encode('utf-8')
+        if not PY3:
+            printer = printer.encode('utf-8')
+            filename = filename.encode('utf-8')
+            title = title.encode('utf-8')
+
         return cupsext.printFileWithOptions(printer, filename, title)
 
     else:
         return -1
 
 def addPrinter(printer_name, device_uri, location, ppd_file, model, info):
+    setPasswordPrompt("You do not have permission to add a printer. You need authentication.")
     log.debug("addPrinter('%s', '%s', '%s', '%s', '%s', '%s')" %
         ( printer_name, device_uri, location, ppd_file, model, info))
 
@@ -811,11 +805,11 @@ def addPrinter(printer_name, device_uri, location, ppd_file, model, info):
     return cupsext.addPrinter(printer_name, device_uri, location, ppd_file, model, info)
 
 def delPrinter(printer_name):
-    setPasswordPrompt("You do not have permission to delete a printer.")
+    setPasswordPrompt("You do not have permission to delete a printer. You need authentication.")
     return cupsext.delPrinter(printer_name)
 
 def enablePrinter(printer_name):
-    setPasswordPrompt("You do not have permission to enable a printer.")
+    setPasswordPrompt("You do not have permission to enable a printer. You need authentication.")
     cmd_full_path = utils.which('cupsenable', True)
     cmd= "%s %s" % (cmd_full_path, printer_name)
     return os_utils.execute(cmd)
@@ -852,3 +846,27 @@ def setPasswordPrompt(prompt):
 
 def findPPDAttribute(name, spec):
     return cupsext.findPPDAttribute(name, spec)
+
+def releaseCupsInstance():
+    return cupsext.releaseCupsInstance()
+
+
+def cups_operation(operation_func, mode, ui_toolkit, ui_obj, *cups_op_args):
+    cnt = 0
+    while cnt < 3:
+        cnt += 1
+        result, status_str = operation_func(*cups_op_args)
+        if result != IPP_FORBIDDEN:
+            break
+        else:
+            releaseCupsInstance()
+            if cnt < 3:
+                if mode == INTERACTIVE_MODE:
+                    log.error("Could not connect to CUPS Server due to insufficient privileges.Try with valid user")
+                elif ui_toolkit == 'qt3':
+                    ui_obj.FailureUI("<b>Could not connect to CUPS Server due to insufficient privileges.</b><p>Try with valid user")
+                else:
+                    from ui4 import ui_utils
+                    ui_utils.FailureUI(ui_obj, "<b>Could not connect to CUPS Server due to insufficient privileges.</b><p>Try with valid user")
+
+    return result, status_str

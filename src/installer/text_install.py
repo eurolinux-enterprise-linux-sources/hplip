@@ -25,13 +25,19 @@ import os
 import sys
 import getpass
 import signal
+import re
 
 # Local
-from base.g import *
-from base import utils, tui
-from core_install import *
+from base.g import * 
+from base import utils, tui, os_utils
+from base.sixext import PY3
+from .core_install import *
 from installer import pluginhandler
 
+# Workaround due to incomplete Python3 support in Linux distros.
+PIP_PACKAGE_SEARCH = "PKG_FROM_PIP:"
+Fedora_Py3 = False
+xsane_reg = re.compile(r'\b({0})\b'.format("xsane"))
 
 def progress_callback(cmd="", desc="Working..."):
     if cmd:
@@ -117,7 +123,7 @@ def start(language, auto=True, test_depends=False,
                 auto = True
 
             elif choice == 'w':
-                import web_install
+                from . import web_install
                 log.debug("Starting web browser installer...")
                 web_install.start(language)
                 return
@@ -178,6 +184,10 @@ def start(language, auto=True, test_depends=False,
         if not ok:
             sys.exit(0)
 
+        if PY3 and core.distro_name.lower() == 'fedora' and int(core.distro_version) < 22:
+             global Fedora_Py3               # Workaround due to incomplete Python3 support in Linux distros.
+             Fedora_Py3 = True
+
         if distro_alternate_version:
             core.distro_version = distro_alternate_version
 
@@ -224,8 +234,8 @@ def start(language, auto=True, test_depends=False,
                 (core.distro, core.distro_name, distro_display_name))
 
             if core.distro != DISTRO_UNKNOWN:
-                versions = core.distros[core.distro_name]['versions'].keys()
-                versions.sort(lambda x, y: utils.compare(x, y))
+                versions = list(core.distros[core.distro_name]['versions'].keys())
+                versions.sort(key=utils.cmp_to_key(cmp))
 
                 log.info(log.bold('\nChoose the version of "%s" that most closely matches your system:\n' % distro_display_name))
                 formatter = utils.TextFormatter(
@@ -362,16 +372,41 @@ def start(language, auto=True, test_depends=False,
         #
         # REQUIRED DEPENDENCIES INSTALL
         #
-        package_mgr_cmd = core.get_distro_data('package_mgr_cmd')
+        package_mgr_cmd = core.get_distro_ver_data('package_mgr_cmd')
         depends_to_install = []
+        depends_to_install_using_pip = []
+
+        if num_req_missing or num_opt_missing:
+            tui.title("MISSING DEPENDENCIES")
+            log.info("Following dependencies are not installed. HPLIP will not work if all REQUIRED dependencies are not installed and some of the HPLIP features will not work if OPTIONAL dependencies are not installed.")
+
+            log.info("%-20s %-20s %-20s"%( "Package-Name", "Component", "Required/Optional"))
+            for d in core.dependencies:
+                if (not core.have_dependencies[d]):
+                    if core.dependencies[d][0]:
+                        deptype = "REQUIRED"
+                    else:
+                        deptype = "OPTIONAL"
+                        
+                    log.info("%-20s %-20s %-20s" %(d, core.dependencies[d][1][0], deptype))
+
+            ok, ans = tui.enter_yes_no("Do you want to install these missing dependencies")
+            if not ok:
+                sys.exit(0)  
+
+            if not ans and num_req_missing:
+                log.error("Installation can not continue because all REQUIRED dependencies are not installed.")                
+                sys.exit(0)  
+
+
         if num_req_missing:
             tui.title("INSTALL MISSING REQUIRED DEPENDENCIES")
-
-            log.warn("There are %d missing REQUIRED dependencies." % num_req_missing)
             log.notice("Installation of dependencies requires an active internet connection.")
-
+            
             for depend, desc, option in core.missing_required_dependencies():
                 log.warning("Missing REQUIRED dependency: %s (%s)" % (depend, desc))
+                if Fedora_Py3:              # Workaround due to incomplete Python3 support in Linux distros.
+                      continue
 
                 ok = False
                 packages, commands = core.get_dependency_data(depend,distro_alternate_version)
@@ -384,11 +419,16 @@ def start(language, auto=True, test_depends=False,
                         answer = True
                     else:
                         ok, answer = tui.enter_yes_no("\nWould you like to have this installer install the missing dependency")
-                        if not ok: sys.exit(0)
+                        if not ok: sys.exit(0) ### TBD: TELL CUSTOMER THAT YOU ARE QUITTING 
 
                     if answer:
                         ok = True
-                        log.debug("Adding '%s' to list of dependencies to install." % depend)
+                        log.debug("Adding '%s' to list of dependencies to install. %s" % (depend,packages))
+                        #Adding package which requires python(3)-pip package.
+                        for pk in packages:
+                            if PIP_PACKAGE_SEARCH in pk:
+                                depends_to_install_using_pip.append(pk.replace(PIP_PACKAGE_SEARCH,''))
+                        
                         depends_to_install.append(depend)
 
                 else:
@@ -398,13 +438,21 @@ def start(language, auto=True, test_depends=False,
                     log.error("Installation cannot continue without this dependency. Please manually install this dependency and re-run this installer.")
                     sys.exit(0)
 
+
+            if Fedora_Py3:                 # Workaround due to incomplete Python3 support in Linux distros.
+                log.info("")
+                log.error("'yum' tool required for package downloads is not supported for Python 3 environments by Fedora.\nHPLIP installation failed.")
+                log.info("")
+                log.warn(log.bold("Manually install the required dependencies to to use HPLIP with Python 3.x on Fedora. More information is available at http://hplipopensource.com/node/369"))
+                log.info("")
+                sys.exit(1)
+
+
         #
         # OPTIONAL dependencies
         #
         if num_opt_missing:
             tui.title("INSTALL MISSING OPTIONAL DEPENDENCIES")
-            log.warn("There are %d missing OPTIONAL dependencies." % num_opt_missing)
-
             log.notice("Installation of dependencies requires an active internet connection.")
 
             for depend, desc, required_for_opt, opt in core.missing_optional_dependencies():
@@ -414,6 +462,9 @@ def start(language, auto=True, test_depends=False,
 
                 else:
                     log.warning("Missing OPTIONAL dependency for option '%s': %s (%s)" % (opt, depend, desc))
+
+                if Fedora_Py3:          # Workaround due to incomplete Python3 support in Linux distros.
+                      continue
 
                 installed = False
                 packages, commands = core.get_dependency_data(depend,distro_alternate_version)
@@ -430,11 +481,16 @@ def start(language, auto=True, test_depends=False,
                         if not ok: sys.exit(0)
 
                     if answer:
-                        log.debug("Adding '%s' to list of dependencies to install." % depend)
+                        log.debug("Adding '%s' to list of dependencies to install. %s" % (depend,packages))
+                        #Adding package which requires python(3)-pip package.
+                        for pk in packages:
+                            if PIP_PACKAGE_SEARCH in pk:
+                                depends_to_install_using_pip.append(pk.replace(PIP_PACKAGE_SEARCH,''))
+
                         depends_to_install.append(depend)
 
                     else:
-                        log.warning("Missing dependencies may effect the proper functioning of HPLIP. Please manually install this dependency after you exit this installer.")
+                        log.warning("Missing dependencies may affect the proper functioning of HPLIP. Please manually install this dependency after you exit this installer.")
                         log.warning("Note: Options that have REQUIRED dependencies that are missing will be turned off.")
 
                         if required_for_opt:
@@ -447,6 +503,13 @@ def start(language, auto=True, test_depends=False,
                         log.warn("Option '%s' has been turned off." % opt)
                         core.selected_options[opt] = False
 
+            if Fedora_Py3:                  # Workaround due to incomplete Python3 support in Linux distros.
+                log.info("")
+                log.warn("'yum' tool required for package downloads is not supported for Python 3 environments by Fedora.")
+                log.warn("Missing dependencies may affect the proper functioning of HPLIP")
+                log.info("")
+                log.notice(log.bold("Manually install the above missing dependencies if required. More information is available at http://hplipopennsource.com/node/369"))
+                log.info("")
 
 
         log.debug("Dependencies to install: %s  hplip_present:%s" % (depends_to_install, core.hplip_present))
@@ -489,8 +552,9 @@ def start(language, auto=True, test_depends=False,
             #
 
             tui.title("RUNNING PRE-PACKAGE COMMANDS")
-            core.run_pre_depend(progress_callback,distro_alternate_version)
-            log.info("OK")
+            if not Fedora_Py3:                            # Workaround due to incomplete Python3 support in Linux distros.
+                core.run_pre_depend(progress_callback,distro_alternate_version)
+                log.info("OK")
 
             #
             # INSTALL PACKAGES AND RUN COMMANDS
@@ -500,7 +564,7 @@ def start(language, auto=True, test_depends=False,
 
             packages = []
             commands_to_run = []
-            package_mgr_cmd = core.get_distro_data('package_mgr_cmd')
+            package_mgr_cmd = core.get_distro_ver_data('package_mgr_cmd')
 
             # HACK!
             individual_pkgs = True
@@ -533,12 +597,42 @@ def start(language, auto=True, test_depends=False,
             log.debug("Commands: %s" % commands_to_run)
             log.debug("Install individual packages: %s" % individual_pkgs)
 
+            PY_PIP = False
+            if len(depends_to_install_using_pip):    # Workaround due to incomplete Python3 support in Linux distros.
+                if PY3:
+                    packages_to_install = 'python3-pip'
+                else:
+                    packages_to_install = 'python-pip'
+
+                cmd = utils.cat(package_mgr_cmd)
+                log.info("Running '%s'\nPlease wait, this may take several minutes..." % cmd)
+                status, output = utils.run(cmd, core.passwordObj)
+                if status != 0:
+                    log.error("Package install command failed with error code %d" % status)
+                    log.warn("Some HPLIP functionality might not function due to missing package(s). [%s]"%depends_to_install_using_pip)
+                    if PY3:          # Workaround due to incomplete Python3 support in Linux distros.
+                        log.notice(log.bold("More information is available at http://hplipopensource.com/node/369"))
+                        sys.exit(1)
+                else:
+                    PY_PIP = True
+
+
             if package_mgr_cmd and packages:
                 if individual_pkgs:
                     for packages_to_install in packages:
+                        if PIP_PACKAGE_SEARCH in packages_to_install:
+                           continue  #This will be installed using python(3)-pip
+                           
+                        # Workaround due to incomplete Python3 support in Linux distros.                        
+                        xsane_var = PY3 and core.get_distro_data('display_name', '(unknown)') in ["Ubuntu", "Linux Mint"]
                         retries = 0
                         while True:
                             cmd = utils.cat(package_mgr_cmd)
+                            # Workaround due to incomplete Python3 support in Linux distros.
+                            if xsane_var and xsane_reg.search(cmd):
+                                package_mgr_cmd_xsane = "sudo apt-get install --no-install-recommends --assume-yes $packages_to_install"
+                                cmd = utils.cat(package_mgr_cmd_xsane)
+
                             log.debug("Package manager command: %s" % cmd)
 
                             log.info("Running '%s'\nPlease wait, this may take several minutes..." % cmd)
@@ -551,6 +645,10 @@ def start(language, auto=True, test_depends=False,
                                     continue
 
                                 log.error("Package install command failed with error code %d" % status)
+                                if PY3:
+                                    log.notice("Some packages may not get installed on python3 due to distro incompatibilites")
+                                    log.info("")
+                                    log.notice("Please check for more information at http://hplipopensource.com/node/369")
                                 ok, ans = tui.enter_yes_no("Would you like to retry installing the missing package(s)")
 
                                 if not ok:
@@ -587,6 +685,18 @@ def start(language, auto=True, test_depends=False,
                                 break
                         else:
                             break
+            if PY_PIP:
+                pip_cmd = utils.find_pip()
+                if pip_cmd:
+                    for d in depends_to_install_using_pip:
+                        cmd = "%s  install %s"%(pip_cmd,d)
+                        cmd = core.passwordObj.getAuthCmd()%cmd
+                        log.info("Running '%s'\nPlease wait, this may take several minutes..." % cmd)
+                        status, output = utils.run(cmd, core.passwordObj)
+                        if status != 0:
+                            log.error("Package install command failed with error code %d" % status)
+                            log.warn("Some HPLIP functionality might not function due to missing package(s). [%s]"%d)
+
 
             if commands_to_run:
                 for cmd in commands_to_run:
@@ -597,8 +707,6 @@ def start(language, auto=True, test_depends=False,
                     if status != 0:
                         log.error("Install command failed with error code %d" % status)
                         sys.exit(1)
-
-
 
 
             #
@@ -612,7 +720,7 @@ def start(language, auto=True, test_depends=False,
 
             if num_req_missing == 0 and core.hplip_present and core.selected_component == 'hplip' and core.distro_version_supported:
                 path = utils.which('hp-uninstall')
-                ok, choice = tui.enter_choice("HPLIP-%s exists, this may conflict with the new one being installed.\nDo you want to ('i'= Remove and Install*, 'o'= Overwrite, 'q'= Quit)?	:"%(prev_hplip_version),['i','o','q'],'i')
+                ok, choice = tui.enter_choice("HPLIP-%s exists, this may conflict with the new one being installed.\nDo you want to ('i'= Remove and Install*, 'q'= Quit)?    :"%(prev_hplip_version),['i','q'],'i')
                 if not ok or choice=='q':
                     log.error("User Exit")
                     sys.exit(0)
@@ -687,7 +795,7 @@ def start(language, auto=True, test_depends=False,
         log.info("OK")
 
         tui.title("BUILD AND INSTALL")
-        os.umask(0022)
+        os.umask(0o022)
         for cmd in core.build_cmds():
             log.info("Running '%s'\nPlease wait, this may take several minutes..." % cmd)
             status, output = utils.run(cmd , core.passwordObj)
@@ -695,6 +803,7 @@ def start(language, auto=True, test_depends=False,
             if status != 0:
                 if 'configure' in cmd:
                     log.error("Configure failed with error: %s" % (CONFIGURE_ERRORS.get(status, CONFIGURE_ERRORS[1])))
+                    log.error("output = %s"%output)
 
                 else:
                     log.error("'%s' command failed with status code %d" % (cmd, status))
@@ -776,13 +885,21 @@ def start(language, auto=True, test_depends=False,
         user_conf.set('upgrade','last_upgraded_time',str(int(time.time())))
         user_conf.set('upgrade','pending_upgrade_time','0')
 
-        tui.title("HPLIP UPDATE NOTIFICATION")
         if prev_hplip_plugin_status != pluginhandler.PLUGIN_NOT_INSTALLED:
+            tui.title("HPLIP PLUGIN UPDATE NOTIFICATION")
             ok, choice = tui.enter_choice("HPLIP Plug-in's needs to be installed/updated. Do you want to update plug-in's?. (y=yes*, n=no) : ",['y', 'n'], 'y')
             if ok and choice == 'y':
-                services.run_hp_tools_with_auth('hp-plugin', core.passwordObj)
+                ok, choice = tui.enter_choice("Do you want to install plug-in's in GUI mode?. (u=GUI mode*, i=Interactive mode) : ",['u', 'i'], 'u')
+                if ok and choice == 'u':
+                    plugin_cmd = 'hp-plugin  -u'
+                elif ok and choice == 'i':
+                    plugin_cmd = 'hp-plugin  -i'
+                else:
+                    log.info(log.bold("Please install hp plugin's manually, otherwise some functionality may break"))
+                if os_utils.execute(plugin_cmd) != 0:
+                    log.error("hp-plugin command failed. Please run hp-plugin manually.")
             else:
-                log.info(log.bold("Please install manually hp plugin's, otherwise some functionality may break"))
+                log.info(log.bold("Please install hp plugin's manually, otherwise some functionality may break"))
 
         if core.selected_component == 'hplip':
             tui.title("RESTART OR RE-PLUG IS REQUIRED")
@@ -843,8 +960,16 @@ def start(language, auto=True, test_depends=False,
 
             if install_printer:
                 log.info("Please make sure your printer is connected and powered on at this time.")
-                if not services.run_hp_tools( 'hp-setup'):
-                    log.error("hp-setup failed. Please run hp-setup manually.")
+                ok, choice = tui.enter_choice("Do you want to setup printer in GUI mode? (u=GUI mode*, i=Interactive mode) : ",['u', 'i'], 'u')
+                if ok and choice == 'u':
+                    if not services.run_hp_tools_with_auth('hp-setup', core.passwordObj):
+                        log.error("hp-setup failed. Please run hp-setup manually.")
+
+                elif ok and choice == 'i':
+                    setup_cmd = core.passwordObj.getAuthCmd() % 'hp-setup  -i'
+                    log.info("Running '%s' command...."%setup_cmd)
+                    if os_utils.execute(setup_cmd) != 0:
+                        log.error("hp-setup failed. Please run hp-setup manually.")
 
         tui.title("RE-STARTING HP_SYSTRAY")
         services.run_systray()
@@ -853,4 +978,3 @@ def start(language, auto=True, test_depends=False,
         log.error("Aborted.")
 
     sys.exit(0)
-

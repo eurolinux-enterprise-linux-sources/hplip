@@ -37,6 +37,8 @@
 #include <cups/cups.h>
 #include "hpmud.h"
 #include "hpip.h"
+#include "hp_ipp.h"
+
 #include "soap.h"
 #include "soapht.h"
 #include "marvell.h"
@@ -46,47 +48,6 @@
 
 #define DEBUG_DECLARE_ONLY
 #include "sanei_debug.h"
-
-#if (CUPS_VERSION_MAJOR > 1) || (CUPS_VERSION_MINOR > 5)
-#define HAVE_CUPS_1_6 1
-#endif
-
-#ifndef HAVE_CUPS_1_6
-#define ippGetGroupTag(attr)  attr->group_tag
-#define ippGetValueTag(attr)  attr->value_tag
-#define ippGetName(attr)      attr->name
-#define ippGetString(attr, element, language) attr->values[element].string.text
-
-static ipp_attribute_t * ippFirstAttribute( ipp_t *ipp )
-{
-    if (!ipp)
-        return (NULL);
-    return (ipp->current = ipp->attrs);
-}
-
-static ipp_attribute_t * ippNextAttribute( ipp_t *ipp )
-{
-    if (!ipp || !ipp->current)
-        return (NULL);
-    return (ipp->current = ipp->current->next);
-}
-
-static int ippSetOperation( ipp_t *ipp, ipp_op_t op )
-{
-    if (!ipp)
-        return (0);
-    ipp->request.op.operation_id = op;
-    return (1);
-}
-
-static int ippSetRequestId( ipp_t *ipp, int request_id )
-{
-    if (!ipp)
-        return (0);
-    ipp->request.any.request_id = request_id;
-    return (1);
-}
-#endif
 
 static SANE_Device **DeviceList = NULL;
 
@@ -299,25 +260,28 @@ static int DevDiscovery(int localOnly)
       }
    }
 
-   /* Ignore localOnly flag (used by saned) and always look for network all-in-one scan devices (defined by cups). */
-   cnt = GetCupsPrinters(&cups_printer);
-   for (i=0; i<cnt; i++)
-   {
-      hpmud_query_model(cups_printer[i], &ma);
-      if (ma.scantype > 0)
-      {
-         hpmud_get_uri_model(cups_printer[i], model, sizeof(model));
-         AddDeviceList(cups_printer[i], model, &DeviceList);
-         total++;
-      }
-      else
-      {
-         DBG(6,"unsupported scantype=%d %s\n", ma.scantype, cups_printer[i]);
-      }
-      free(cups_printer[i]);
-   }
-   if (cups_printer)
-      free(cups_printer);
+    /* Check localOnly flag (used by saned) to decide whether to look for network all-in-one scan devices (defined by cups). */
+	if (!localOnly)
+	{
+		cnt = GetCupsPrinters(&cups_printer);
+		for (i=0; i<cnt; i++)
+		{
+			hpmud_query_model(cups_printer[i], &ma);
+			if (ma.scantype > 0)
+			{
+				hpmud_get_uri_model(cups_printer[i], model, sizeof(model));
+				AddDeviceList(cups_printer[i], model, &DeviceList);
+				total++;
+			}
+			else
+			{
+				DBG(6,"unsupported scantype=%d %s\n", ma.scantype, cups_printer[i]);
+			}
+			free(cups_printer[i]);
+		}
+		if (cups_printer)
+			free(cups_printer);
+	}
 
 bugout:
    return total;

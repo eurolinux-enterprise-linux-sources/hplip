@@ -23,24 +23,21 @@
 import os
 import os.path
 import sys
-import re
-import time
-import cStringIO
-import ConfigParser
-import shutil
-import stat
 
 # Local
-from base.logger import *
-from base.g import *
-from base.codes import *
-from base import utils, password,services
+from .g import *
+from .codes import *
+from . import utils, password
 from installer import pluginhandler
 
 # DBus
 import dbus
 import dbus.service
-import gobject
+
+if PY3:
+    from gi import _gobject as gobject
+else:
+    import gobject
 
 import warnings
 # Ignore: .../dbus/connection.py:242: DeprecationWarning: object.__init__() takes no parameters
@@ -161,7 +158,7 @@ class PolicyKitService(dbus.service.Object):
             log.warning("AccessDeniedException")
             raise
 
-        except dbus.DBusException, ex:
+        except dbus.DBusException as ex:
             log.warning("AccessDeniedException %r", ex)
             raise AccessDeniedException(ex.message)
 
@@ -176,15 +173,10 @@ class PolicyKitService(dbus.service.Object):
                                     "/org/freedesktop/PolicyKit1/Authority",
                                     "org.freedesktop.PolicyKit1.Authority")
         policy_kit = dbus.Interface(obj, "org.freedesktop.PolicyKit1.Authority")
-        info = dbus.Interface(connection.get_object("org.freedesktop.DBus",
-                                                    "/org/freedesktop/DBus/Bus",
-                                                    False),
-                              "org.freedesktop.DBus")
-        pid = info.GetConnectionUnixProcessID(sender)
-        
+
         subject = (
-            'unix-process',
-            { 'pid' : dbus.UInt32(pid, variant_level = 1) }
+           'system-bus-name',
+            { 'name' : dbus.String(sender, variant_level = 1) }
         )
         details = { '' : '' }
         flags = dbus.UInt32(1)         # AllowUserInteraction = 0x00000001
@@ -198,6 +190,7 @@ class PolicyKitService(dbus.service.Object):
                                           cancel_id)
         if not ok:
             log.error("Session not authorized by PolicyKit version 1")
+            raise AccessDeniedException("Session not authorized by PolicyKit")
 
         return ok
 
@@ -206,9 +199,8 @@ if utils.to_bool(sys_conf.get('configure', 'policy-kit')):
     class BackendService(PolicyKitService):
         INTERFACE_NAME = 'com.hp.hplip'
         SERVICE_NAME   = 'com.hp.hplip'
-        LOGFILE_NAME   = '/tmp/hp-pkservice.log'
 
-        def __init__(self, connection=None, path='/', logfile=LOGFILE_NAME):
+        def __init__(self, connection=None, path='/'):
             if connection is None:
                 connection = get_service_bus()
 
@@ -217,8 +209,6 @@ if utils.to_bool(sys_conf.get('configure', 'policy-kit')):
             self.name = dbus.service.BusName(self.SERVICE_NAME, connection)
             self.loop = gobject.MainLoop()
             self.version = 0
-
-            log.set_logfile("%s.%d" % (logfile, os.getpid()))
             log.set_level("debug")
 
         def run(self, version=None):
@@ -229,7 +219,6 @@ if utils.to_bool(sys_conf.get('configure', 'policy-kit')):
                     return
 
             self.version = version
-            log.set_where(Logger.LOG_TO_CONSOLE_AND_FILE)
             log.debug("Starting back-end service loop (version %d)" % version)
 
             self.loop.run()
@@ -243,7 +232,8 @@ if utils.to_bool(sys_conf.get('configure', 'policy-kit')):
             if self.version == 0:
                 try:
                     self.check_permission_v0(sender, INSTALL_PLUGIN_ACTION)
-                except AccessDeniedException, e:
+                except AccessDeniedException as e:
+                    log.error("installPlugin:  Failed due to permission error [%s]" %e)
                     return False
 
             elif self.version == 1:
@@ -259,7 +249,7 @@ if utils.to_bool(sys_conf.get('configure', 'policy-kit')):
             log.debug("installPlugin: installing from '%s'" % src_dir)
             try:
                 from installer import pluginhandler
-            except ImportError,e:
+            except ImportError as e:
                 log.error("Failed to Import pluginhandler")
                 return False
 
@@ -306,7 +296,7 @@ class PolicyKit(object):
         try:
             ok = self.iface.installPlugin(src_dir)
             return ok
-        except dbus.DBusException, e:
+        except dbus.DBusException as e:
             log.debug("installPlugin: %s" % str(e))
             return False
 
@@ -321,7 +311,7 @@ class PolicyKit(object):
         try:
             ok = self.iface.shutdown("")
             return ok
-        except dbus.DBusException, e:
+        except dbus.DBusException as e:
             log.debug("shutdown: %s" % str(e))
             return False
 
@@ -330,10 +320,6 @@ class PolicyKit(object):
 
 
 def run_plugin_command(required=True, plugin_reason=PLUGIN_REASON_NONE, Mode = GUI_MODE):
-    su_sudo = None
-    need_sudo = True
-    name = None
-    version = None
 
     if utils.to_bool(sys_conf.get('configure', 'policy-kit')):
         try:
@@ -341,20 +327,8 @@ def run_plugin_command(required=True, plugin_reason=PLUGIN_REASON_NONE, Mode = G
             su_sudo = "%s"
             need_sudo = False
             log.debug("Using PolicyKit for authentication")
-        except dbus.DBusException, ex:
-            log.error("PolicyKit NOT installed when configured for use")
-
-    if os.geteuid() == 0:
-        su_sudo = "%s"
-        need_sudo = False
-        
-    passwordObj = password.Password(Mode)
-    if need_sudo:
-        su_sudo = passwordObj.getAuthType()
-
-    if su_sudo is None:
-        log.error("Unable to find a suitable sudo command to run 'hp-plugin'")
-        return (False, False)
+        except dbus.DBusException as ex:
+            log.error("PolicyKit NOT installed when configured for use. [%s]"%ex)
 
     req = '--required'
     if not required:
@@ -365,16 +339,9 @@ def run_plugin_command(required=True, plugin_reason=PLUGIN_REASON_NONE, Mode = G
     else:
         p_path="python ./plugin.py"
 
-    if 'gksu' in su_sudo:
-        cmd = passwordObj.getAuthCmd() % ("%s -u %s --reason %s" % (p_path, req, plugin_reason))
-        cmd +=" -m" 
-        cmd += (" \"hp-plugin:- HP Device requires to install HP proprietary plugin. Please enter root password to continue\"")
-    else:
-        cmd = passwordObj.getAuthCmd() % ("%s -u %s --reason %s To_install_plugin_for_HP_Device" % (p_path, req, plugin_reason))
-
-        
+    cmd = "%s -u %s --reason %s" %(p_path, req, plugin_reason)   
     log.debug("%s" % cmd)
-    status, output = utils.run(cmd, passwordObj)
+    status = os_utils.execute(cmd)
 
     return (status == 0, True)
 

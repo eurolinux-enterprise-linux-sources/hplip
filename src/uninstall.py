@@ -19,7 +19,7 @@
 #
 # Author: Amarnath Chitumalla
 #
-
+from __future__ import print_function
 __version__ = '1.0'
 __title__ = 'HPLIP Uninstaller'
 __mod__ = 'hp-uninstall'
@@ -64,7 +64,7 @@ try:
     opts, args = getopt.getopt(sys.argv[1:], 'hl:gn',
         ['help', 'help-rest', 'help-man', 'help-desc', 'gui', 'lang=','logging=', 'debug'])
 
-except getopt.GetoptError, e:
+except getopt.GetoptError as e:
     log.error(e.msg)
     usage()
     sys.exit(1)
@@ -86,7 +86,7 @@ for o, a in opts:
         language = a.lower()
 
     elif o == '--help-desc':
-        print __doc__,
+        print(__doc__, end=' ')
         sys.exit(0)
 
     elif o in ('-l', '--logging'):
@@ -106,7 +106,7 @@ if log_level is not None:
     if not log.set_level(log_level):
         usage()
         
-log_file = os.path.normpath('/var/log/hp/hplip-uninstall.log')
+log_file = os.path.normpath('%s/hplip-uninstall.log'%prop.user_dir)
 if os.getuid() != 0:
     log.error("To run 'hp-uninstall' utility, you must have root privileges.(Try using 'sudo' or 'su -c')")
     sys.exit(1)

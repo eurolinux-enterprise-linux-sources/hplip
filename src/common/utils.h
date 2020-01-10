@@ -10,8 +10,12 @@
 #define STRINGIZE(x) _STRINGIZE(x)
 
 #define BUG(args...) syslog(LOG_ERR, __FILE__ " " STRINGIZE(__LINE__) ": " args)
+#define DBG(args...) syslog(LOG_INFO, __FILE__ " " STRINGIZE(__LINE__) ": " args)
+
 #define UTILS_LINE_SIZE 256     /* Length of a line. */
 #define UTILS_BUFFER_SIZE 16384  /* General Read/Write buffer. */
+
+#define MAX_FILE_PATH_LEN   512
 
 #define PRNT_PLUGIN_LJ "lj.so"
 #define PRNT_PLUGIN_HBPL1 "hbpl1.so"
@@ -20,6 +24,7 @@
 #define SCAN_PLUGIN_SOAPHT "bb_soapht.so"
 
 #define HPLIP_PLUGIN_STATE  "/var/lib/hp/hplip.state"
+#define CUPS_TMP_DIR   getenv("TMPDIR") ? : getenv("HOME") ?:"/tmp"
 
 enum UTILS_CONF_RESULT
 {
@@ -148,6 +153,7 @@ extern "C" {
     */
 
     int createTempFile(char* szFileName, FILE** pFilePtr);
+    int getHPLogLevel();
 
 #ifdef __cplusplus
 }

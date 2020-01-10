@@ -23,7 +23,7 @@
 __version__ = '1.0'
 __title__ = 'Self Diagnse Utility and Healing Utility'
 __mod__ = 'hp-doctor'
-__doc__ = """Check for the deprecated, plug-in, dependencies, queues and Permission issues. And provides self diagnose steps"""
+__doc__ = """Tool checks for the deprecated, plug-in, dependencies, queues, permission issues and provides self diagnose steps"""
 
 
 # global import
@@ -34,7 +34,16 @@ import getpass
 
 #local import
 from base.g import *
-from base import utils, tui, module,queues, os_utils, services, smart_install
+from base.strings import *
+try:
+    from base import utils, tui, module,queues, os_utils, services, smart_install
+except ImportError as e:
+    if 'cupsext' in e.args[0] :
+        check_extension_module_env('cupsext')
+    else:
+        log.exception("")
+        sys.exit(1)
+        
 from installer.core_install import *
 from check import DependenciesCheck
 
@@ -43,14 +52,14 @@ USAGE = [(__doc__, "", "name", True),
          utils.USAGE_SPACE,
          utils.USAGE_MODE,
          ("Run in interactive mode:", "-i or --interactive (Default)", "option", False),
-         ("Run in graphical UI mode:", "-u or --gui (future use)", "option", False),
+#         ("Run in graphical UI mode:", "-u or --gui (future use)", "option", False),
          utils.USAGE_SPACE,
          utils.USAGE_OPTIONS,
          utils.USAGE_HELP,
          utils.USAGE_LOGGING1, utils.USAGE_LOGGING2, utils.USAGE_LOGGING3,
-         ("Non-interactive mode:","-n(Without asking permissions)(future use)","option",False),
-         ("Perform the task for the given device id:","-d<device id>(future use)","option",False),
-         ("Take options from the file instead of command line:","-f<file> (future use)","option",False)
+#         ("Non-interactive mode:","-n(Without asking permissions)(future use)","option",False),
+#         ("Perform the task for the given device id:","-d<device id>(future use)","option",False),
+#         ("Take options from the file instead of command line:","-f<file> (future use)","option",False)
 
         ]
 
@@ -125,21 +134,18 @@ def install_plugin(core):
         log.info("Plugin's already installed")
         return True
     else:
-        log.info("HP Properitery Plugin's are not required as no plug-in printer is present.")
+        log.info("No plug-in printers are configured.")
         return True
 
     if ok and user_input == 'y':
 #        authenticate(core)
-        cmd=utils.which('hp-plugin',True)
-        if cmd:
-            cmd = core.passwordObj.getAuthCmd() %append_options(cmd)
-            sts = os_utils.execute(cmd)
-            if sts == 0:
-                return True
+        cmd='hp-plugin'
+        cmd = append_options(cmd)
+        sts = os_utils.execute(cmd)
+        if sts == 0:
+            return True
         else:
-            log.error("Failed to locate hp-plugin command")
-    else:
-        log.info(log.bold("Please run 'hp-plugin' command in root mode to install the Plugin's"))
+            log.info(log.bold("Failed to install Plugin. Please run 'hp-plugin' command to install plugin manually"))
     return False
 
 
@@ -149,8 +155,7 @@ def deprecated_check(core):
         log.info("No Deprecated items are found")
     else:
         log.error("This distro (i.e %s  %s) is either deprecated or not yet supported."%(core.distro_name, core.distro_version))
-        ok,user_input =tui.enter_choice(log.red("The diagnosis is limited on unsupported platforms. Do you want to continue?(y=yes, n=no*):"),['y', 'n'], 'n')
-#        ok,user_input =tui.enter_choice(log.red("This tool may not diagnose all the problems. Do you want to continue?(y=yes, n=no*)"),['y', 'n'], 'n')
+        ok,user_input =tui.enter_choice(log.red("The diagnosis is limited on unsupported platforms. Do you want to continue?(y=yes*, n=no):"),['y', 'n'], 'y')
         if not ok or user_input !='y':
             clean_exit(2)
 
@@ -197,13 +202,13 @@ log.set_module(__mod__)
 try:
     mod = module.Module(__mod__, __title__, __version__, __doc__, USAGE,
                     (INTERACTIVE_MODE, GUI_MODE),
-                    (UI_TOOLKIT_QT3, UI_TOOLKIT_QT4), True, True)
+                    (UI_TOOLKIT_QT3, UI_TOOLKIT_QT4), True)
 
     opts, device_uri, printer_name, mode, ui_toolkit, loc = \
                mod.parseStdOpts('hl:gnid:f:w', ['summary-only','help', 'help-rest', 'help-man', 'help-desc', 'interactive', 'gui', 'lang=','logging=', 'debug'],
                      handle_device_printer=False)
 
-except getopt.GetoptError, e:
+except getopt.GetoptError as e:
     log.error(e.msg)
     usage()
 
@@ -241,13 +246,13 @@ for o, a in opts:
 
 try:
     if os.geteuid() == 0:
-        log.error("Please run %s as a non-root user"%__mod__)
+        log.error("%s %s"  %(__mod__, queryString(ERROR_RUNNING_AS_ROOT)))
         sys.exit(1)
 
     mod.lockInstance('')
     mod.quiet= False
     mod.showTitle()
-    log_file = os.path.normpath('/var/log/hp/hp-doctor.log')
+    log_file = os.path.normpath('%s/hp-doctor.log'%prop.user_dir)
 
     if os.path.exists(log_file):
         try:
@@ -299,16 +304,17 @@ try:
             core.install_missing_dependencies(INTERACTIVE_MODE,core.get_required_deps(),core.get_optional_deps(), core.get_cmd_to_run())
 
         log.info(log.bold("\n\nChecking Permissions...."))
-        if not core.get_missing_user_grps() and not core.get_disable_selinux_status():
+#        if not core.get_missing_user_grps() and not core.get_disable_selinux_status():
+        if not core.get_disable_selinux_status():
             log.info("Permissions are correct.")
 
-        if core.get_missing_user_grps():
-            log.info(log.bold("Missing User Groups"))
-            log.info(log.bold('-'*len("Missing User Groups")))
-            log.info("%s"%core.get_missing_user_grps())
-            authenticate(core)
-            if core.add_groups_to_user(core.get_missing_user_grps(), core.get_user_grp_cmd()):
-                IS_RESTART_REQ = True
+#        if core.get_missing_user_grps():
+#            log.info(log.bold("Missing User Groups"))
+#            log.info(log.bold('-'*len("Missing User Groups")))
+#            log.info("%s"%core.get_missing_user_grps())
+#            authenticate(core)
+#            if core.add_groups_to_user(core.get_missing_user_grps(), core.get_user_grp_cmd()):
+#                IS_RESTART_REQ = True
 
         if core.get_disable_selinux_status():
             log.info(log.bold("SELinux Status"))
@@ -319,7 +325,7 @@ try:
                 IS_RESTART_REQ = True
 
     log.info(log.bold("\n\nChecking for Configured Queues...."))
-    queues.main_function(core.passwordObj, MODE,ui_toolkit, False,False, DEVICE_URI)
+    queues.main_function(core.passwordObj, MODE,ui_toolkit, False, DEVICE_URI)
 
     log.info(log.bold("\n\nChecking for HP Properitery Plugin's...."))
     ### Check for Plugin Printers

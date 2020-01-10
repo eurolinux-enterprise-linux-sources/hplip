@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
 # (c) Copyright @ 2013 Hewlett-Packard Development Company, L.P.
@@ -20,13 +21,14 @@
 #
 import os
 import getpass
-import cStringIO
 import time
 import string
 
-from base import utils, tui
-from base.g import *
-import pexpect
+from . import utils, tui
+from .g import *
+from .sixext import BytesIO, StringIO
+from .sixext.moves import input
+from . import pexpect
 
 PASSWORD_RETRY_COUNT = 3
 
@@ -56,21 +58,42 @@ AUTH_TYPES ={'mepis':'su',
              }
 
 
+# This function promts for the username and password and returns (username,password)
+def showPasswordPrompt(prompt):
+    import getpass
+    print ("")
+    print ("")
+    print (log.bold(prompt))
+    username = input("Username: ")
+    password = getpass.getpass("Password: ")
+
+    return (username, password)
+
+
+
 #TBD this function shoud be removed once distro class implemented
 def get_distro_name():
-    os_name = None;
-    if utils.which('lsb_release'):
-       name = os.popen('lsb_release -i | cut -f 2')
-       os_name = name.read().strip()
-       name.close()
-    else:
+    os_name = None
+    try:
+        import platform
+        os_name = platform.dist()[0]
+    except ImportError:
+        os_name = None
+
+    if not os_name: 
+        name = os.popen('lsb_release -i | cut -f 2')
+        os_name = name.read().strip()
+        name.close()
+
+    if not os_name:
        name = os.popen("cat /etc/issue | awk '{print $1}' | head -n 1")
        os_name = name.read().strip()
        name.close()
 
-    if "redhatenterprise" in os_name.lower():
+    os_name = os_name.lower()
+    if "redhatenterprise" in os_name:
         os_name = 'rhel'
-    elif "suse" in os_name.lower():
+    elif "suse" in os_name:
         os_name = 'suse'
 
     return os_name
@@ -85,6 +108,13 @@ class Password(object):
         self.__mode = Mode
         self.__readAuthType()  #self.__authType   
         self.__expectList =[]
+
+        if not utils.to_bool(sys_conf.get('configure','qt4', '0')) and utils.to_bool(sys_conf.get('configure','qt3', '0')):
+            self.__ui_toolkit = 'qt3'
+        else:
+            self.__ui_toolkit = 'qt4'
+            
+            
         for s in utils.EXPECT_WORD_LIST:
             try:
                 p = re.compile(s, re.I)
@@ -100,11 +130,13 @@ class Password(object):
         #TBD: Getting distro name should get distro class
         distro_name =  get_distro_name().lower()
 
-        try:
-            self.__authType = AUTH_TYPES[distro_name]
-        except KeyError:
-            log.warn("%s distro is not found in AUTH_TYPES"%distro_name)
-            self.__authType = 'su'
+        self.__authType = user_conf.get('authentication', 'su_sudo', '')
+        if self.__authType != "su" and self.__authType != "sudo":
+            try:
+                self.__authType = AUTH_TYPES[distro_name]
+            except KeyError:
+                log.warn("%s distro is not found in AUTH_TYPES"%distro_name)
+                self.__authType = 'su'
 
     def __getPasswordDisplayString(self):
         if self.__authType == "su":
@@ -118,6 +150,7 @@ class Password(object):
             self.__authType = "su"
         else:
             self.__authType = "sudo"
+        user_conf.set('authentication', 'su_sudo', self.__authType)
 
 
     def __get_password(self,pswd_msg=''):
@@ -126,33 +159,34 @@ class Password(object):
                 pswd_msg = "Please enter the root/superuser password: "
             else:
                 pswd_msg = "Please enter the sudoer (%s)'s password: " % os.getenv('USER')
-
         return getpass.getpass(log.bold(pswd_msg))
 
 
 
-    def __get_password_ui(self,pswd_msg='', qt="qt4"):
+    def __get_password_ui(self,pswd_msg='', user ="root"):
         if pswd_msg == '':
             pswd_msg = "Your HP Device requires to install HP proprietary plugin\nPlease enter root/superuser password to continue"
 
-        #TBD: currently takes only username as root, need to handle for other users also.
-        if qt == "qt4":
-            from ui4.setupdialog import showPasswordUI
-            username, password = showPasswordUI(pswd_msg, "root", False)
-
-        if qt == "qt3":
+        if self.__ui_toolkit == "qt3":
             from ui.setupform import showPasswordUI
-            username, password = showPasswordUI(pswd_msg, "root", False)
+            username, password = showPasswordUI(pswd_msg, user, False)
+        else:       #self.__ui_toolkit == "qt4" --> default qt4
+            from ui4.setupdialog import showPasswordUI
+            username, password = showPasswordUI(pswd_msg, user, False)
 
+        if username == "" and password == "":
+            raise Exception("User Cancel")
+            
         return  password
 
 
     def __password_check(self, cmd, timeout=1):
-        output = cStringIO.StringIO()
+        import io
+        output = io.StringIO()
         ok, ret = False, ''
 
         try:
-            child = pexpect.spawn(cmd, timeout=1)
+            child = pexpect.spawnu(cmd, timeout=timeout)
         except pexpect.ExceptionPexpect:
             return 1, ''
 
@@ -163,13 +197,12 @@ class Password(object):
                 while True:
                     update_spinner()
 
-                    i = child.expect_list(self.__expectList)
+                    i = child.expect(self.__expectList)
+                    
                     cb = child.before
                     if cb:
-                        # output
+
                         start = time.time()
-                        log.log_to_file(cb)
-                        log.debug(cb)
                         output.write(cb)
 
                     if i == 0: # EOF
@@ -177,12 +210,13 @@ class Password(object):
                         break
 
                     elif i == 1: # TIMEOUT
+                        
                         continue
 
                     else: # password
                         child.sendline(self.__password)
 
-            except (Exception, pexpect.ExceptionPexpect):
+            except (Exception, pexpect.ExceptionPexpect) as e:          
                 log.exception()
 
         finally:
@@ -196,26 +230,20 @@ class Password(object):
         if ok:
             return child.exitstatus, ret
         else:
+            
             return 1, ''
 
 
     def __validatePassword(self ,pswd_msg):
         x = 1
-        qt = ""
         while True:
             if self.__mode == INTERACTIVE_MODE:
                 self.__password = self.__get_password(pswd_msg)
             else:
                 if self.getAuthType() == 'su':
-                    if not utils.to_bool(sys_conf.get('configure', 'qt4', '0')) and utils.to_bool(sys_conf.get('configure', 'qt3', '0')) :
-                        qt = "qt3"      #ifqt4 is enabled, gives more preferrence to qt4.
-                    else:
-                        qt = "qt4"
-
-                    self.__password = self.__get_password_ui(pswd_msg, qt)
+                    self.__password = self.__get_password_ui(pswd_msg, "root")
                 else:
-                    # Other password utils (i.e. kdesu, gnomesu, gksu) just validates the password but won't return password.
-                    break
+                    self.__password = self.__get_password_ui(pswd_msg, os.getenv("USER"))
 
             cmd = self.getAuthCmd() % "true"
             log.debug(cmd)
@@ -223,23 +251,30 @@ class Password(object):
             status, output = self.__password_check(cmd)
             log.debug("status = %s  output=%s "%(status,output))
 
+            if self.__mode == GUI_MODE:
+                if self.__ui_toolkit == "qt4":
+                    from ui4.setupdialog import FailureMessageUI
+                if self.__ui_toolkit == "qt3":
+                    from ui.setupform import FailureMessageUI
+
+
             if status == 0:
                 self.__passwordValidated = True
                 break
             elif "not in the sudoers file" in output:
-                log.error("User is not in the sudoers file.")
-                break
-                #TBD.. IF user dosn't have sudo permissions, needs to change to "su" type and query for password
-#                self.__changeAuthType()
+                #TBD.. IF user doesn't have sudo permissions, needs to change to "su" type and query for password
+                self.__changeAuthType()
+                msg = "User doesn't have sudo permissions.\nChanging Authentication Type. Try again."
+                if self.__mode == GUI_MODE:
+                    FailureMessageUI(msg)
+                else:
+                    log.error(msg)
+                raise Exception("User is not in the sudoers file.")
+
             else:
                 self.__password = ""
                 x += 1
                 if self.__mode == GUI_MODE:
-                    if qt == "qt4":
-                        from ui4.setupdialog import FailureMessageUI
-                    if qt == "qt3":
-                        from ui.setupform import FailureMessageUI
-
                     if x > PASSWORD_RETRY_COUNT:
                         FailureMessageUI("Password incorrect. ")
                         return
@@ -264,11 +299,11 @@ class Password(object):
 
     def __get_password_utils_ui(self):
         distro_name =  get_distro_name().lower()
-        if distro_name == 'rhel':
-            AuthType, AuthCmd  = 'su', 'su -c "%s"'
+        if self.__authType == "sudo":
+            AuthType, AuthCmd = 'sudo', 'sudo %s'
         else:
-            AuthType, AuthCmd  = 'su', 'su - -c "%s"'
-
+            AuthType, AuthCmd  = 'su', 'su -c "%s"'
+        '''
         if utils.which('kdesu'):
             AuthType, AuthCmd = 'kdesu', 'kdesu -- %s'
         elif utils.which('kdesudo'):
@@ -277,9 +312,8 @@ class Password(object):
             AuthType, AuthCmd = 'gnomesu', 'gnomesu -c "%s"'
         elif utils.which('gksu'):
             AuthType, AuthCmd = 'gksu' , 'gksu "%s"'
-            
-#Uncomment :::   For testing 
-#        AuthType, AuthCmd = 'su' ,'su - -c "%s"'
+        '''
+
         return AuthType, AuthCmd
 
 

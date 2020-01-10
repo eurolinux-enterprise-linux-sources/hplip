@@ -30,7 +30,7 @@ import sys
 import os
 import getopt
 import re
-import Queue
+from base.sixext.moves import queue
 import time
 import operator
 
@@ -43,7 +43,7 @@ from prnt import cups
 
 mod = module.Module(__mod__, __title__, __version__, __doc__, None,
                     (NON_INTERACTIVE_MODE, GUI_MODE),
-                    (UI_TOOLKIT_QT3, UI_TOOLKIT_QT4))
+                    (UI_TOOLKIT_QT3, UI_TOOLKIT_QT4), False, False, True)
 
 mod.setUsage(module.USAGE_FLAG_DEVICE_ARGS,
     extra_options=[
@@ -61,6 +61,10 @@ opts, device_uri, printer_name, mode, ui_toolkit, loc = \
 device_uri = mod.getDeviceUri(device_uri, printer_name,
     filter={'copy-type': (operator.gt, 0)})
 
+if not device_uri:
+    sys.exit(1)
+
+log.info("Using device : %s\n" % device_uri)
 num_copies = None
 reduction = None
 reduction_spec = False
@@ -237,7 +241,6 @@ if mode == GUI_MODE:
         #try:
         if 1:
             app = QApplication(sys.argv)
-
             dlg = MakeCopiesDialog(None, device_uri)
             dlg.show()
             try:
@@ -279,7 +282,7 @@ else: # NON_INTERACTIVE_MODE
                 result_code, max_reduction = dev.getPML(pml.OID_COPIER_REDUCTION_MAXIMUM)
                 result_code, max_enlargement = dev.getPML(pml.OID_COPIER_ENLARGEMENT_MAXIMUM)
 
-            except Error, e:
+            except Error as e:
                 log.error(e.msg)
                 sys.exit(1)
 
@@ -298,8 +301,8 @@ else: # NON_INTERACTIVE_MODE
             log.debug("max_enlargement = %d" % max_enlargement)
             log.debug("scan_src = %d" % scan_src)
 
-            update_queue = Queue.Queue()
-            event_queue = Queue.Queue()
+            update_queue = queue.Queue()
+            event_queue = queue.Queue()
 
             dev.copy(num_copies, contrast, reduction,
                      quality, fit_to_page, scan_src,
@@ -311,7 +314,7 @@ else: # NON_INTERACTIVE_MODE
                 while update_queue.qsize():
                     try:
                         status = update_queue.get(0)
-                    except Queue.Empty:
+                    except queue.Empty:
                         break
 
                     if status == copier.STATUS_IDLE:

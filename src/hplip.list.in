@@ -49,6 +49,7 @@ $pyexecdir=@pyexecdir@
 $icondir=@icondir@
 $systraydir=@systraydir@
 $docdir=@hpdocdir@
+$htmldir=@hphtmldir@
 $version=@VERSION@
 $internal_tag=@PACKAGE_BUGREPORT@
 
@@ -80,8 +81,6 @@ $print_only_exclude=@epm_print_only_exclude@
 %endif
 %if hpcups-install
 f 0755 root root $cupsfilter/hpcups hpcups
-#f 0755 root root $cupsfilter/hpps hpps
-f 0755 root root $cupsfilter/hplipjs hplipjs
 f 0755 root root $cupsfilter/hpps prnt/filters/hpps
 %endif
 f 0644 root root /etc/hp/hplip.conf hplip.conf
@@ -111,11 +110,16 @@ f 0644 root root $ppd/HP prnt/ps/*.ppd.gz
 @epm_print_only_exclude@l 0755 root root $libdir/libhpmud.dylib libhpmud.0.0.6.dylib
 @epm_print_only_exclude@f 0755 root root $libdir/libhpip.0.0.1.dylib .libs/libhpip.0.0.1.dylib
 @epm_print_only_exclude@l 0755 root root $libdir/libhpip.dylib libhpip.0.0.1.dylib
+@epm_print_only_exclude@f 0755 root root $libdir/libhpipp.0.0.1.dylib .libs/libhpipp.0.0.1.dylib
+@epm_print_only_exclude@l 0755 root root $libdir/libhpipp.dylib libhpipp.0.0.1.dylib
 %system !darwin
 @epm_print_only_exclude@f 0755 root root $libdir/libhpmud.so.0.0.6 .libs/libhpmud.so.0.0.6
 @epm_print_only_exclude@l 0755 root root $libdir/libhpmud.so libhpmud.so.0.0.6
 @epm_print_only_exclude@f 0755 root root $libdir/libhpip.so.0.0.1 .libs/libhpip.so.0.0.1
 @epm_print_only_exclude@l 0755 root root $libdir/libhpip.so libhpip.so.0.0.1
+@epm_print_only_exclude@f 0755 root root $libdir/libhpipp.so.0.0.1 .libs/libhpipp.so.0.0.1
+@epm_print_only_exclude@l 0755 root root $libdir/libhpipp.so libhpipp.so.0.0.1
+
 # Ugly fix for inconsistent libcrypto soname
 #l 0755 root root $libdir/libcrypto.so.6 libcrypto.so.0.9.8
 %system all
@@ -187,6 +191,8 @@ f 0644 root root $ppd/HP prnt/ps/*.ppd.gz
 @epm_full@f 755 root root $home/hpssd.py hpssd.py
 @epm_full@d 775 root root $home/base -
 @epm_full@f 644 root root $home/base base/*.py
+@epm_full@d 775 root root $home/base/pexpect -
+@epm_full@f 644 root root $home/base/pexpect/__init__.py base/pexpect/__init__.py
 @epm_full@f 644 root root $home/hpaio.desc scan/sane/hpaio.desc
 @epm_full@f 755 root root $home/align.py align.py
 @epm_full@f 755 root root $home/timedate.py timedate.py
@@ -277,11 +283,11 @@ f 0644 root root $ppd/HP prnt/ps/*.ppd.gz
 @epm_full@f 755 root root $home/hplip_clean.sh hplip_clean.sh
 
 # docs
-@epm_full@f 644 root root $docdir doc/*
-@epm_full@d 775 root root $docdir/images -
-@epm_full@f 644 root root $docdir/images doc/images/*
-@epm_full@d 775 root root $docdir/styles -
-@epm_full@f 644 root root $docdir/styles doc/styles/*
+@epm_full@f 644 root root $htmldir doc/*
+@epm_full@d 775 root root $htmldir/images -
+@epm_full@f 644 root root $htmldir/images doc/images/*
+@epm_full@d 775 root root $htmldir/styles -
+@epm_full@f 644 root root $htmldir/styles doc/styles/*
 # python commands
 @epm_full@l 755 root root $bindir/hp-toolbox ../share/hplip/toolbox.py
 @epm_full@l 755 root root $bindir/hp-colorcal ../share/hplip/colorcal.py
@@ -329,7 +335,6 @@ f 0644 root root $ppd/HP prnt/ps/*.ppd.gz
 
 %if !SUSE9
 @epm_print_only_exclude@f 0700 root root $cupsbackend/hp .libs/hp
-@epm_print_only_exclude@f 0755 root root $bindir/hp-mkuri .libs/hp-mkuri
 %endif
 
 # Use LINPUS8 for Acer Aspire One
@@ -455,8 +460,6 @@ f 0644 root root $docdir/copyright prnt/plugins/copyright
 d 0755 root root /var/lib/hp/ -
 f 0644 root root $home/data/firmware data/firmware/*.fw.gz
 d 0775 root root $home/data/plugin -
-d 0775 root lp /var/log/hp -
-d 0775 root lp /var/log/hp/tmp -
 
 #scan
 
@@ -492,8 +495,7 @@ EOF
 f 0644 root root $docdir/COPYING COPYING
 f 0644 root root $docdir/copyright copyright
 d 0755 root root /var/lib/hp/ -
-d 0775 root lp /var/log/hp -
-d 0775 root lp /var/log/hp/tmp -
+
 %system !darwin
 @epm_print_only_exclude@f 0644 root root /etc/udev/rules.d/56-hpmud.rules data/rules/56-hpmud.rules
 

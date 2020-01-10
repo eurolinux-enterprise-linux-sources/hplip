@@ -26,7 +26,7 @@
 #   104 = no libdl
 
 #AC_PREREQ(2.59)
-AC_INIT([HP Linux Imaging and Printing], [3.13.7], [3.13.7], [hplip])
+AC_INIT([HP Linux Imaging and Printing], [3.15.9], [3.15.9], [hplip])
 #AM_INIT_AUTOMAKE([1.9 foreign])
 AM_INIT_AUTOMAKE
 AC_DISABLE_STATIC
@@ -107,7 +107,7 @@ AM_CONDITIONAL(DOC_BUILD, test x$doc_build = xyes)
 
 AC_MSG_CHECKING([for hpijs only build])
 AC_ARG_ENABLE(hpijs_only_build,
-  [  --enable-hpijs-only-build     enable hpijs only build (default=yes)],
+  [  --enable-hpijs-only-build     enable hpijs only build (default=yes)(Deprecated)],
   hpijs_only_build=$enableval, hpijs_only_build=no)
 if test "$hpijs_only_build" = "yes"; then
    AC_MSG_RESULT(yes)
@@ -116,6 +116,7 @@ if test "$hpijs_only_build" = "yes"; then
    epm_hpcups_only=\#
    epm_print_only_exclude=\#
    epm_hpijs_only=
+   AC_MSG_WARN(HPIJS build is deprecated. Feature can be used as is. Fixes or updates will not be provided)
 else
    AC_MSG_RESULT(no)
    epm_hpijs_only=\#
@@ -168,11 +169,12 @@ AM_CONDITIONAL(FULL_BUILD, test x$hpcups_only_build = xno && test x$lite_build =
 
 AC_MSG_CHECKING([for hpijs install])
 AC_ARG_ENABLE(hpijs_install,
-  [  --enable-hpijs-install     enable hpijs install (default=no)],
+  [  --enable-hpijs-install     enable hpijs install (default=no)(Deprecated)],
   hpijs_install=$enableval, hpijs_install=no)
 if test "$hpijs_install" = "yes"; then
    AC_MSG_RESULT(yes)
    epm_hpijs_install=yes
+   AC_MSG_WARN(HPIJS is deprecated. Feature can be used as is. Fixes or updates will not be provided)
 else
    AC_MSG_RESULT(no)
 fi
@@ -214,10 +216,11 @@ AM_CONDITIONAL(NETWORK_BUILD, test x$network_build = xyes)
 
 AC_MSG_CHECKING([for parallel port build])
 AC_ARG_ENABLE(pp_build,
-  [  --enable-pp-build    (**Deprecated) enable parallel port build (default=no) ],
+  [  --enable-pp-build    enable parallel port build (default=no)(Deprecated) ],
   pp_build=$enableval, pp_build=no)
 if test "$pp_build" = "yes"; then
-   AC_MSG_RESULT(yes(**Support Deprecated))
+   AC_MSG_RESULT(yes)
+   AC_MSG_WARN(Parallel Port support deprecated. Feature can be used as is. Fixes or updates will not be provided)
    AC_DEFINE(HAVE_PPORT) 
 else
    AC_MSG_RESULT(no)
@@ -279,17 +282,6 @@ else
    AC_MSG_RESULT(no)
 fi
 
-AC_MSG_CHECKING([for udev acl rules])
-AC_ARG_ENABLE(udev_acl_rules,
-  [  --enable-udev-acl-rules    enable udev acl rules (default=no)],
-  udev_acl_rules=$enableval, udev_acl_rules=no)
-if test "$udev_acl_rules" = "yes"; then
-   AC_MSG_RESULT(yes)
-else
-   AC_MSG_RESULT(no)
-fi
-AM_CONDITIONAL(UDEV_ACL_RULES, test x$udev_acl_rules = xyes)
-
 AC_MSG_CHECKING([for udev sysfs enable rules])
 AC_ARG_ENABLE(udev_sysfs_rules,
   [  --enable-udev_sysfs_rules    Use SYSFS attribute instead of ATTR/ATTRS attribute in udev rules(default=no)],
@@ -350,13 +342,17 @@ AC_ARG_WITH(mimedir, AC_HELP_STRING([--with-mimedir=DIR], [set cups mime.types l
 AC_ARG_WITH(docdir, AC_HELP_STRING([--with-docdir=DIR], [set hplip documentation directory [default=datadir/doc]]),
    hpdocdir=$withval, hpdocdir="$datadir/doc/hplip-$VERSION")
 
+AC_ARG_WITH(htmldir, AC_HELP_STRING([--with-htmldir=DIR], [set hplip html documentation directory [default=datadir/doc]]),
+   hphtmldir=$withval, hphtmldir="$datadir/doc/hplip-$VERSION")
+
 AC_MSG_CHECKING([for foomatic ppd install])
 AC_ARG_ENABLE(foomatic_ppd_install,
-  [  --enable-foomatic-ppd-install    enable foomatic static ppd install (default=no), uses hpppddir],
+  [  --enable-foomatic-ppd-install    enable foomatic static ppd install (default=no)(Deprecated), uses hpppddir],
   foomatic_ppd_install=$enableval, foomatic_ppd_install=no)
 if test $foomatic_ppd_install = yes; then
    AC_MSG_RESULT(yes)
    epm_foomatic_ppd_install=yes
+   AC_MSG_WARN(foomatic static ppd install is deprecated. Feature can be used as is. Fixes or updates will not be provided)
 else
    AC_MSG_RESULT(no)
 fi
@@ -367,11 +363,12 @@ AC_ARG_WITH(drvdir, AC_HELP_STRING([--with-drvdir=DIR], [set cups drv install di
 
 AC_MSG_CHECKING([for foomatic drv install])
 AC_ARG_ENABLE(foomatic_drv_install,
-  [  --enable-foomatic-drv-install    enable foomatic dynamic ppd install (default=no), uses drvdir and hpppddir],
+  [  --enable-foomatic-drv-install    enable foomatic dynamic ppd install (default=no)(Deprecated), uses drvdir and hpppddir],
   foomatic_drv_install=$enableval, foomatic_drv_install=no)
 if test $foomatic_drv_install = yes; then
    AC_MSG_RESULT(yes)
    epm_foomatic_drv_install=yes
+   AC_MSG_WARN(foomatic dynamic ppd install is deprecated. Feature can be used as is. Fixes or updates will not be provided)
 else
    AC_MSG_RESULT(no)
 fi
@@ -403,12 +400,13 @@ AM_CONDITIONAL(CUPS_PPD_INSTALL, test x$cups_ppd_install = xyes && test x$hpijs_
 
 AC_MSG_CHECKING([for foomatic-rip-hplip install])
 AC_ARG_ENABLE(foomatic_rip_hplip_install,
-  [  --enable-foomatic-rip-hplip-install    enable foomatic-rip-hplip install (default=no), uses cupsfilterdir],
+  [  --enable-foomatic-rip-hplip-install    enable foomatic-rip-hplip install (default=no)(Deprecated), uses cupsfilterdir],
   foomatic_rip_hplip_install=$enableval, foomatic_rip_hplip_install=no)
 if test "$foomatic_rip_hplip_install" = "yes"; then
    AC_MSG_RESULT(yes)
    foomatic_filter="foomatic-rip-hplip"
    epm_foomatic_rip_hplip_install=yes
+   AC_MSG_WARN(foomatic-rip-hplip install is deprecated. Feature can be used as is. Fixes or updates will not be provided)
 else
    AC_MSG_RESULT(no)
    foomatic_filter="foomatic-rip"
@@ -532,10 +530,13 @@ if test "$hpijs_only_build" = "no" && test "$lite_build" = "no" && test "$hpcups
    AC_ARG_VAR([PYTHON], [Python interpreter/compiler command])
    AM_PATH_PYTHON([2.2])
    AC_MSG_CHECKING([for path to Python.h])
-   PYTHONINCLUDEDIR=`$PYTHON -c "from distutils.sysconfig import get_python_inc; print get_python_inc();"`
-   AC_MSG_RESULT("using $PYTHONINCLUDEDIR")
+   PYTHONINCLUDEDIR=`$PYTHON -c "from distutils.sysconfig import get_python_inc; print (get_python_inc());"`
+   AC_MSG_RESULT("using $PYTHONINCLUDEDIR ....  python${PYTHON_VERSION}/Python.h")
    AC_ARG_VAR(PYTHONINCLUDEDIR, [path to Python.h C header file])
-   AC_CHECK_HEADERS(python$PYTHON_VERSION/Python.h, ,[AC_MSG_ERROR([cannot find python-devel support], 6)])
+   AC_CHECK_HEADERS([python${PYTHON_VERSION}/Python.h python${PYTHON_VERSION}mu/Python.h python${PYTHON_VERSION}m/Python.h ],
+          [FOUND_HEADER=yes; break;])
+   AS_IF([test "x$FOUND_HEADER" != "xyes"],
+          [AC_MSG_ERROR([cannot find python-devel support], 6)])
 fi
 
 if test "$hpijs_only_build" = "no" && test "$scan_build" = "yes" && test "$hpcups_only_build" = "no"; then
@@ -579,13 +580,15 @@ AC_DEFINE_DIR([abs_datadir], [datadir])
 AC_DEFINE_DIR([abs_sbindir], [sbindir])
 AC_DEFINE_DIR([abs_hpppddir], [hpppddir])
 AC_DEFINE_DIR([abs_docdir], [hpdocdir])
+AC_DEFINE_DIR([abs_htmldir], [hphtmldir])
 abs_ppddir=${abs_hpppddir%/*}
 AC_DEFINE_DIR([abs_drvdir], [drvdir])
 
 AC_SUBST(abs_datadir) 
 AC_SUBST(abs_sbindir) 
 AC_SUBST(abs_hpppddir) 
-AC_SUBST(abs_docdir) 
+AC_SUBST(abs_docdir)  
+AC_SUBST(abs_htmldir) 
 AC_SUBST(abs_ppddir) 
 AC_SUBST(abs_drvdir) 
 AC_SUBST(abs_mimedir) 
@@ -596,6 +599,7 @@ AC_SUBST(cupsbackenddir)
 AC_SUBST(cupsfilterdir)
 AC_SUBST(hpppddir)
 AC_SUBST(hpdocdir)
+AC_SUBST(hphtmldir)
 AC_SUBST(drvdir)
 AC_SUBST(network_build)
 AC_SUBST(pp_build)
@@ -643,7 +647,6 @@ AC_SUBST(lite_build)
 AC_SUBST(hpcups_only_build)
 AC_SUBST(SNMPLIB)
 AC_SUBST(prefix)
-AC_SUBST(udev_acl_rules)
 AC_SUBST(udev_sysfs_rules)
 
 AC_CONFIG_FILES(Makefile hplip.conf hplip.desktop hplip-systray.desktop prnt/drv/hpijs.drv prnt/drv/hpcups.drv hplip.list data/policykit/com.hp.hplip.service)

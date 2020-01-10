@@ -6,8 +6,8 @@
 
 Summary: HP Linux Imaging and Printing Project
 Name: hplip
-Version: 3.13.7
-Release: 6%{?dist}.1
+Version: 3.15.9
+Release: 2%{?dist}
 License: GPLv2+ and MIT
 Group: System Environment/Daemons
 
@@ -20,34 +20,25 @@ Patch2: hplip-strstr-const.patch
 Patch3: hplip-ui-optional.patch
 Patch4: hplip-no-asm.patch
 Patch5: hplip-deviceIDs-drv.patch
-Patch6: hplip-mucks-with-spooldir.patch
-Patch7: hplip-udev-rules.patch
-Patch8: hplip-retry-open.patch
-Patch9: hplip-snmp-quirks.patch
-Patch10: hplip-discovery-method.patch
-Patch11: hplip-hpijs-marker-supply.patch
-Patch12: hplip-clear-old-state-reasons.patch
-Patch13: hplip-systray-dbus-exception.patch
-Patch14: hplip-hpcups-sigpipe.patch
-Patch15: hplip-logdir.patch
-Patch16: hplip-bad-low-ink-warning.patch
-Patch17: hplip-deviceIDs-ppd.patch
-Patch18: hplip-skip-blank-lines.patch
-Patch19: hplip-dbglog-newline.patch
-Patch21: hplip-ppd-ImageableArea.patch
-Patch22: hplip-raw_deviceID-traceback.patch
-Patch23: hplip-UnicodeDecodeError.patch
-Patch24: hplip-addprinter.patch
-Patch25: hplip-dbus-exception.patch
-Patch26: hplip-notification-exception.patch
-Patch28: hplip-wifisetup.patch
-Patch29: hplip-makefile-chgrp.patch
-Patch30: hplip-hpaio-localonly.patch
-Patch31: hplip-IEEE-1284-4.patch
-Patch32: hplip-check.patch
-Patch33: hplip-mkstemp.patch
-Patch34: hplip-CVE-2013-4325.patch
-Patch35: hplip-do-not-crash-on-usb-failure.patch
+Patch6: hplip-udev-rules.patch
+Patch7: hplip-retry-open.patch
+Patch8: hplip-snmp-quirks.patch
+Patch9: hplip-hpijs-marker-supply.patch
+Patch10: hplip-clear-old-state-reasons.patch
+Patch11: hplip-hpcups-sigpipe.patch
+Patch12: hplip-logdir.patch
+Patch13: hplip-bad-low-ink-warning.patch
+Patch14: hplip-deviceIDs-ppd.patch
+Patch15: hplip-ppd-ImageableArea.patch
+Patch16: hplip-scan-tmp.patch
+Patch17: hplip-log-stderr.patch
+Patch18: hplip-avahi-parsing.patch
+Patch19: hplip-dj990c-margin.patch
+Patch20: hplip-strncpy.patch
+Patch21: hplip-no-write-bytecode.patch
+Patch22: hplip-silence-ioerror.patch
+Patch23: hplip-stuck-plugin.patch
+Patch24: hplip-do-not-crash-on-usb-failure.patch
 
 %global hpijs_epoch 1
 Requires: hpijs%{?_isa} = %{hpijs_epoch}:%{version}-%{release}
@@ -55,6 +46,7 @@ Requires: %{name}-libs%{?_isa} = %{version}-%{release}
 Requires: python-imaging
 Requires: cups
 Requires: wget
+Requires: gnupg
 Requires: dbus-python
 
 BuildRequires: net-snmp-devel
@@ -152,32 +144,8 @@ SANE driver for scanners in HP's multi-function devices (from HPOJ).
 %patch4 -p1 -b .no-asm
 
 # Corrected several IEEE 1284 Device IDs using foomatic data.
-# Color LaserJet CM1312nfi (bug #581005)
-# Color LaserJet 3800 (bug #581935)
-# Color LaserJet 2840 (bug #582215)
-# Color LaserJet CP1518ni (bug #613689)
-# Color LaserJet 2600n (bug #613712)
-# Color LaserJet 2500/3700/4550/4600/4650/4700/5550/CP1515n/CP2025n
-#                CP3525/CP4520 Series/CM2320nf (bug #659040)
-# Color LaserJet CP2025dn (bug #651509)
-# Color LaserJet CM4730 MFP (bug #658831)
-# Color LaserJet CM3530 MFP (bug #659381)
-# LaserJet 4050 Series/4100 Series/2100 Series/4350/5100 Series/8000 Series
-#          P3005/P3010 Series/P4014/P4515 (bug #659039)
-# LaserJet Professional P1606dn (bug #708472)
-# LaserJet Professional M1212nf MFP (bug #742490)
-# LaserJet M1536dnf MFP (bug #743915)
-# LaserJet M1522nf MFP (bug #745498)
-# LaserJet M1319f MFP (bug #746614)
-# LaserJet M1120 MFP (bug #754139)
-# LaserJet P1007 (bug #585272)
-# LaserJet P1505 (bug #680951)
-# LaserJet P2035 (Ubuntu #917703)
-# PSC 1600 series (bug #743821)
-# Officejet 6300 series (bug #689378)
-# LaserJet Professional P1102w (bug #795958)
-# Color LaserJet CM4540 MFP (bug #968177)
-# Color LaserJet cp4005 (bug #980976)
+# Color LaserJet 2500 series (bug #659040)
+# LaserJet 4100 Series/2100 Series (bug #659039)
 %patch5 -p1 -b .deviceIDs-drv
 chmod +x %{SOURCE2}
 mv prnt/drv/hpijs.drv.in{,.deviceIDs-drv-hpijs}
@@ -185,126 +153,82 @@ mv prnt/drv/hpijs.drv.in{,.deviceIDs-drv-hpijs}
            prnt/drv/hpijs.drv.in.deviceIDs-drv-hpijs \
            > prnt/drv/hpijs.drv.in
 
-# Stopped hpcups pointlessly trying to read spool files
-# directly (bug #552572).
-%patch6 -p1 -b .mucks-with-spooldir
-
 # Don't add printer queue, just check plugin.
 # Move udev rules from /etc/ to /usr/lib/ (bug #748208).
-%patch7 -p1 -b .udev-rules
+%patch6 -p1 -b .udev-rules
 
 # Retry when connecting to device fails (bug #532112).
-%patch8 -p1 -b .retry-open
+%patch7 -p1 -b .retry-open
 
 # Mark SNMP quirks in PPD for HP OfficeJet Pro 8500 (bug #581825).
-%patch9 -p1 -b .snmp-quirks
-
-# Fixed hp-setup traceback when discovery page is skipped (bug #523685).
-%patch10 -p1 -b .discovery-method
+%patch8 -p1 -b .snmp-quirks
 
 # Fixed bogus low ink warnings from hpijs driver (bug #643643).
-%patch11 -p1 -b .hpijs-marker-supply
+%patch9 -p1 -b .hpijs-marker-supply
 
 # Clear old printer-state-reasons we used to manage (bug #510926).
-%patch12 -p1 -b .clear-old-state-reasons
-
-# Catch DBusException in hp-systray (bug #746024).
-%patch13 -p1 -b .systray-dbus-exception
+%patch10 -p1 -b .clear-old-state-reasons
 
 # Avoid busy loop in hpcups when backend has exited (bug #525944).
-%patch14 -p1 -b .hpcups-sigpipe
+%patch11 -p1 -b .hpcups-sigpipe
 
 # CUPS filters should use TMPDIR when available (bug #865603).
-%patch15 -p1 -b .logdir
+%patch12 -p1 -b .logdir
 
 # Fixed Device ID parsing code in hpijs's dj9xxvip.c (bug #510926).
-%patch16 -p1 -b .bad-low-ink-warning
+%patch13 -p1 -b .bad-low-ink-warning
 
 # Add Device ID for
-# LaserJet 1200 (bug #577308)
-# LaserJet 1320 series (bug #579920)
-# LaserJet 2300 (bug #576928)
-# LaserJet P2015 Series (bug #580231)
-# LaserJet 4250 (bug #585499)
-# Color LaserJet 2605dn (bug #583953)
-# Color LaserJet 3800 (bug #581935)
-# Color LaserJet 2840 (bug #582215)
-# LaserJet 4050 Series/4100 Series/2100 Series/2420/4200/4300/4350/5100 Series
-#          8000 Series/M3027 MFP/M3035 MFP/P3005/P3010 Series (bug #659039)
-# Color LaserJet 2500/2550/2605dn/3700/4550/4600
-#                4650/4700/5550/CP3525 (bug #659040)
-# Color LaserJet CM4730 MFP (bug #658831)
-# Color LaserJet CM3530 MFP (bug #659381)
-# Designjet T770 (bug #747957)
-# Color LaserJet CM4540 MFP (bug #968177)
-# Color LaserJet cp4005 (bug #980976)
-for ppd_file in $(grep '^diff' %{PATCH17} | cut -d " " -f 4);
+# HP LaserJet Color M451dn (bug #1159380)
+for ppd_file in $(grep '^diff' %{PATCH14} | cut -d " " -f 4);
 do
   gunzip ${ppd_file#*/}.gz
 done
-%patch17 -p1 -b .deviceIDs-ppd
-for ppd_file in $(grep '^diff' %{PATCH17} | cut -d " " -f 4);
+%patch14 -p1 -b .deviceIDs-ppd
+for ppd_file in $(grep '^diff' %{PATCH14} | cut -d " " -f 4);
 do
   gzip -n ${ppd_file#*/}
 done
-
-# Hpcups (ljcolor) was putting black lines where should be blank lines (bug #579461).
-%patch18 -p1 -b .skip-blank-lines
-
-# Added missing newline to string argument in dbglog() call (bug #585275).
-%patch19 -p1 -b .dbglog-newline
 
 # Fix ImageableArea for Laserjet 8150/9000 (bug #596298).
-for ppd_file in $(grep '^diff' %{PATCH21} | cut -d " " -f 4);
+for ppd_file in $(grep '^diff' %{PATCH15} | cut -d " " -f 4);
 do
   gunzip ${ppd_file#*/}.gz
 done
-%patch21 -p1 -b .ImageableArea
-for ppd_file in $(grep '^diff' %{PATCH21} | cut -d " " -f 4);
+%patch15 -p1 -b .ImageableArea
+for ppd_file in $(grep '^diff' %{PATCH15} | cut -d " " -f 4);
 do
   gzip -n ${ppd_file#*/}
 done
 
-# Fixed traceback on error condition in device.py (bug #628125).
-%patch22 -p1 -b .raw_deviceID-traceback
+# Scan to /var/tmp instead of /tmp (bug #1076954).
+%patch16 -p1 -b .scan-tmp
 
-# Avoid UnicodeDecodeError in printsettingstoolbox.py (bug #645739).
-%patch23 -p1 -b .UnicodeDecodeError
+# Treat logging before importing of logger module (bug #984699).
+%patch17 -p1 -b .log-stderr
 
-# Call cupsSetUser in cupsext's addPrinter method before connecting so
-# that we can get an authentication callback (bug #538352).
-%patch24 -p1 -b .addprinter
+# Fix parsing of avahi-daemon output (bug #1096939).
+%patch18 -p1 -b .parsing
 
-# Catch D-Bus exceptions in fax dialog (bug #645316).
-%patch25 -p1 -b .dbus-exception
+# Fixed left/right margins for HP DeskJet 990C (LP #1405212).
+%patch19 -p1 -b .dj990c-margin
 
-# Catch GError exception when notification showing failed (bug #665577).
-%patch26 -p1 -b .notification-exception
+# Fixed uses of strncpy throughout.
+%patch20 -p1 -b .strncpy
 
-# Avoid KeyError in ui4/wifisetupdialog.py (bug #680939).
-%patch28 -p1 -b .wifisetup
+# Don't try to write bytecode cache for hpfax backend (bug #1192761)
+# or hp-config_usb_printer (bug #1266903)
+# or hpps filter (bug #1241548).
+%patch21 -p1 -b .no-write-bytecode
 
-# Don't run 'chgrp lp /var/log/hp' and 'chgrp lp /var/log/hp/tmp' in makefile
-%patch29 -p1 -b .chgrp
+# Ignore IOError when logging output (bug #712537).
+%patch22 -p1 -b .silence-ioerror
 
-# Pay attention to the SANE localOnly flag in hpaio (bug #743593).
-%patch30 -p1 -b .hpaio-localonly
+# hp-plugin hangs on 'su' (bug #1249414).
+%patch23 -p1 -b .stuck-plugin
 
-# Support IEEE 1284.4 protocol over USB (bug #858861).
-%patch31 -p1 -b .hplip-IEEE-1284-4
-
-# Various adjustments to make 'hp-check' run more smoothly (bug #683007).
-%patch32 -p1 -b .check
-
-# Avoid several bugs in createTempFile (bug #925032).
-%patch33 -p1 -b .mkstemp
-
-# Applied patch to avoid unix-process authorization subject when using
-# polkit as it is racy (CVE-2013-4325).
-%patch34 -p1 -b .CVE-2013-4325
-
-# hp/hpfax backends crash when no USB is available (bug #1343581).
-%patch35 -p1 -b .hplip-usb-no-crash
+# hp/hpfax backends crash when no USB is available (bug #1332714).
+%patch24 -p1 -b .hplip-usb-no-crash
 
 sed -i.duplex-constraints \
     -e 's,\(UIConstraints.* \*Duplex\),//\1,' \
@@ -313,6 +237,9 @@ sed -i.duplex-constraints \
 # Change shebang /usr/bin/env python -> /usr/bin/python (bug #618351).
 find -name '*.py' -print0 | xargs -0 \
     sed -i.env-python -e 's,^#!/usr/bin/env python,#!/usr/bin/python,'
+sed -i.env-python -e 's,^#!/usr/bin/env python,#!/usr/bin/python,' \
+    prnt/filters/hpps \
+    fax/filters/pstotiff
 
 %build
 %configure \
@@ -355,6 +282,7 @@ rm -f   %{buildroot}%{_bindir}/foomatic-rip \
         %{buildroot}%{_libdir}/*.la \
         %{buildroot}%{python_sitearch}/*.la \
         %{buildroot}%{_libdir}/libhpip.so \
+	%{buildroot}%{_libdir}/libhpipp.so \
         %{buildroot}%{_libdir}/sane/*.la \
         %{buildroot}%{_datadir}/cups/model/foomatic-ppds \
         %{buildroot}%{_datadir}/applications/hplip.desktop \
@@ -422,7 +350,6 @@ rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/hplip-systray.desktop
 %{_bindir}/hp-logcapture
 %{_bindir}/hp-makecopies
 %{_bindir}/hp-makeuri
-%{_bindir}/hp-mkuri
 %{_bindir}/hp-plugin
 %{_bindir}/hp-pqdiag
 %{_bindir}/hp-printsettings
@@ -487,8 +414,6 @@ rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/hplip-systray.desktop
 %{_datadir}/hplip/prnt
 %{_datadir}/hplip/scan
 %{_localstatedir}/lib/hp
-%dir %attr(0774,root,lp) %{_localstatedir}/log/hp
-%dir %attr(1774,root,lp) %{_localstatedir}/log/hp/tmp
 %dir %attr(0775,root,lp) /run/hplip/
 %{_tmpfilesdir}/hplip.conf
 
@@ -503,6 +428,7 @@ rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/hplip-systray.desktop
 
 %files libs
 %{_libdir}/libhpip.so.*
+%{_libdir}/libhpipp.so.*
 # The so symlink is required here (see bug #489059).
 %{_libdir}/libhpmud.so*
 # Python extension
@@ -531,7 +457,6 @@ rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/hplip-systray.desktop
 %{_datadir}/cups/drv/*
 %{_cups_serverbin}/filter/hpcups
 %{_cups_serverbin}/filter/hpcupsfax
-%{_cups_serverbin}/filter/hplipjs
 
 %files -n libsane-hpaio
 %{_libdir}/sane/libsane-*.so*
@@ -545,8 +470,14 @@ rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/hplip-systray.desktop
 %postun libs -p /sbin/ldconfig
 
 %changelog
-* Tue Jun 07 2016 Jiri Popelka <jpopelka@redhat.com> - 3.13.7-6.1
-- hp/hpfax backends crash when no USB is available (bug #1343581)
+* Tue Jun 14 2016 Zdenek Dohnal <zdohnal@redhat.com> - 3.15.9-2
+- 1069619 - Rebase to version 3.15.9 extension - solving bug 1346196 (/usr/lib/cups/filter/hpps uses python -B which is unknown), which is duplicate of bug 1202451
+
+* Fri Jun 10 2016 Zdenek Dohnal <zdohnal@redhat.com> - 3.15.9-1
+- 1069619 Rebase to version 3.15.9
+
+* Tue Jun 07 2016 Jiri Popelka <jpopelka@redhat.com> - 3.13.7-7
+- hp/hpfax backends crash when no USB is available (bug #1332714)
 
 * Fri Jan 24 2014 Daniel Mach <dmach@redhat.com> - 3.13.7-6
 - Mass rebuild 2014-01-24

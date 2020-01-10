@@ -53,6 +53,10 @@ try:
     device_uri = mod.getDeviceUri(device_uri, printer_name,
                                   filter={'power-settings': (operator.gt, 0)})
 
+    if not device_uri:
+        sys.exit(1)
+
+    log.info("Using device : %s\n" % device_uri)
     if not utils.canEnterGUIMode4():
         log.error("%s -u/--gui requires Qt4 GUI support. Exiting." % __mod__)
         sys.exit(1)
@@ -64,17 +68,14 @@ try:
         log.error("Unable to load Qt4 support. Is it installed?")
         sys.exit(1)
 
-    #try:
-    if 1:
-        app = QApplication(sys.argv)
-
-        dlg = DeviceSetupDialog(None, device_uri)
-        dlg.show()
-        try:
-            log.debug("Starting GUI loop...")
-            app.exec_()
-        except KeyboardInterrupt:
-            sys.exit(0)
+    app = QApplication(sys.argv)
+    dlg = DeviceSetupDialog(None, device_uri)
+    dlg.show()
+    try:
+        log.debug("Starting GUI loop...")
+        app.exec_()
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 
 

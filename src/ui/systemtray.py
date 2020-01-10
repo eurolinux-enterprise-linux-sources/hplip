@@ -31,7 +31,7 @@ import time
 # Local
 from base.g import *
 from base import device, utils
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
 
 # Qt
 try:
@@ -280,7 +280,7 @@ class SystrayIcon(QLabel):
 
         if managerWin != 0:
             # set StructureNotifyMask (1L << 17)
-            XSelectInput(dpy, managerWin, 1L << 17)
+            XSelectInput(dpy, managerWin, 1 << 17)
 
         #XUngrabServer(dpy)
         XFlush(dpy)
@@ -436,11 +436,11 @@ class SystemTrayApp(QApplication):
         self.timer.start(UPGRADE_CHECK_DELAY)
 
         # Cleans the /var/log/hp/tmp directory
-        self.handle_hplip_clean()
+        #self.handle_hplip_clean()
         
-        self.clean_timer = QTimer()
-        self.clean_timer.connect(self.clean_timer,SIGNAL("timeout()"),self.handle_hplip_clean)
-        self.clean_timer.start(CLEAN_EXEC_DELAY)
+        #self.clean_timer = QTimer()
+        #self.clean_timer.connect(self.clean_timer,SIGNAL("timeout()"),self.handle_hplip_clean)
+        #self.clean_timer.start(CLEAN_EXEC_DELAY)
 
 
         self.ERROR_STATE_TO_ICON = {

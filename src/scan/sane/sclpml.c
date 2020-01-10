@@ -41,6 +41,7 @@
 #include "common.h"
 #include "scl.h"
 #include "hpaio.h"
+#include "utils.h"
 
 #define DEBUG_DECLARE_ONLY
 #include "sanei_debug.h"
@@ -1319,11 +1320,15 @@ static SANE_Status hpaioAdvanceDocument(hpaioScanner_t hpaio)
     /* If there is an ADF see if paper is loaded. */
     if (hpaio->supportedAdfModes & ADF_MODE_ADF)
     {
-        retcode = SclInquire(hpaio->deviceid, hpaio->scan_channelid, SCL_CMD_INQUIRE_DEVICE_PARAMETER,
+        if (hpaio->currentDuplex && hpaio->currentSideNumber == 2)
+            documentLoaded = 1;//No need to check paper in ADF
+        else
+        {
+            retcode = SclInquire(hpaio->deviceid, hpaio->scan_channelid, SCL_CMD_INQUIRE_DEVICE_PARAMETER,
                               SCL_INQ_ADF_DOCUMENT_LOADED, &documentLoaded, 0, 0);
-                              
-	if (retcode != SANE_STATUS_GOOD)
-            goto bugout;
+            if (retcode != SANE_STATUS_GOOD)
+                goto bugout;
+        }
     }
 
     /* If in Batch mode, by definition we are in ADF mode. */
@@ -2067,6 +2072,10 @@ abort:
             {
                 free( ( void * ) session->saneDevice.model );
             }
+            if (session->mfpdtf)
+            {
+                MfpdtfDeallocate (session->mfpdtf);
+            }
             free( session );
             session = NULL;
         }
@@ -2095,6 +2104,18 @@ void sclpml_close(SANE_Handle handle)
     {
        hpmud_close_device(hpaio->deviceid);
        hpaio->deviceid = -1;
+    }
+    if( hpaio->saneDevice.name )
+    {
+        free( ( void * ) hpaio->saneDevice.name );
+    }
+    if( hpaio->saneDevice.model )
+    {
+        free( ( void * ) hpaio->saneDevice.model );
+    }
+    if (hpaio->mfpdtf)
+    {
+        MfpdtfDeallocate (hpaio->mfpdtf);
     }
     free(hpaio);
     session = NULL;
@@ -2636,13 +2657,16 @@ SANE_Status sclpml_start(SANE_Handle handle)
 
         if( log_output )
         {
-            char f[256];
-            static int cnt=0;   
-            
-            sprintf(f, "/var/log/hp/tmp/mfpdtf_%d.out", cnt++);
-            
+            char f[MAX_FILE_PATH_LEN];
+            static int cnt=0;
+
+            if (getenv("HOME"))
+                sprintf(f, "%s/.hplip/mfpdtf_%d.out", getenv("HOME"), cnt++);
+            else
+                sprintf(f, "/tmp/mfpdtf_%d.out", cnt++);
+
             bug("saving raw image to %s \n", f);
-            
+
             MfpdtfLogToFile( hpaio->mfpdtf,  f );
         }
         

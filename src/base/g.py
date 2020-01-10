@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
 # (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
@@ -25,16 +26,23 @@
 import sys
 import os
 import os.path
-import ConfigParser
+from .sixext import PY3
+from .sixext.moves import configparser
 import locale
 import pwd
 import stat
 import re
 
 # Local
-from codes import *
-import logger
-from base import os_utils
+from .codes import *
+from . import logger
+from . import os_utils
+from .sixext import to_unicode
+if PY3:
+    QString = type("")
+ 
+    def cmp(a, b):
+        return (a > b) - (a < b)
 
 # System wide logger
 log = logger.Logger('', logger.Logger.LOG_LEVEL_INFO, logger.Logger.LOG_TO_CONSOLE)
@@ -63,7 +71,7 @@ def to_bool(s, default=False):
 class Properties(dict):
 
     def __getattr__(self, attr):
-        if attr in self.keys():
+        if attr in list(self.keys()):
             return self.__getitem__(attr)
         else:
             return ""
@@ -78,14 +86,14 @@ prop = Properties()
 class ConfigBase(object):
     def __init__(self, filename):
         self.filename = filename
-        self.conf = ConfigParser.ConfigParser()
+        self.conf = configparser.ConfigParser()
         self.read()
 
 
-    def get(self, section, key, default=u''):
+    def get(self, section, key, default=to_unicode('')):
         try:
             return self.conf.get(section, key)
-        except (ConfigParser.NoOptionError, ConfigParser.NoSectionError):
+        except (configparser.NoOptionError, configparser.NoSectionError):
             return default
 
 
@@ -119,9 +127,13 @@ class ConfigBase(object):
                 return
             try:
                 fp = open(self.filename, "r")
-                self.conf.readfp(fp)
+                try:
+                    self.conf.readfp(fp)
+                except (configparser.DuplicateOptionError):
+                    log.warn("Found Duplicate Entery in %s" % self.filename)
+                    self.CheckDuplicateEntries()
                 fp.close()
-            except (OSError, IOError, ConfigParser.MissingSectionHeaderError):
+            except (OSError, IOError, configparser.MissingSectionHeaderError):
                 log.debug("Unable to open file %s for reading." % self.filename)
 
     def write(self):
@@ -140,9 +152,30 @@ class ConfigBase(object):
                 fp.close()
             except (OSError, IOError):
                 log.debug("Unable to open file %s for writing." % self.filename)
+    
+    def CheckDuplicateEntries(self):
+        try:
+            f = open(self.filename,'r')
+            data = f.read()
+            f.close()
+        except IOError:
+            data =""
 
+        final_data =''
+        for a in data.splitlines():
+           if not a or a not in final_data:
+                final_data = final_data +'\n' +a
 
+        import tempfile
+        fd, self.filename = tempfile.mkstemp()
+        f = open(self.filename,'w')
+        f.write(final_data)
+        f.close()
 
+        self.read()
+        os.unlink(self.filename)
+ 
+        
 class SysConfig(ConfigBase):
     def __init__(self):
         ConfigBase.__init__(self, '/etc/hp/hplip.conf')
@@ -159,20 +192,15 @@ class State(ConfigBase):
 
 class UserConfig(ConfigBase):
     def __init__(self):
+
+        sts, prop.user_dir = os_utils.getHPLIPDir()
+
         if not os.geteuid() == 0:
-            prop.user_dir = os.path.expanduser('~/.hplip')
-
-            try:
-                if not os.path.exists(prop.user_dir):
-                    os.makedirs(prop.user_dir)
-            except OSError:
-                pass # This is sometimes OK, if running hpfax: for example
-
             prop.user_config_file = os.path.join(prop.user_dir, 'hplip.conf')
 
             if not os.path.exists(prop.user_config_file):
                 try:
-                    file(prop.user_config_file, 'w').close()
+                    open(prop.user_config_file, 'w').close()
                     s = os.stat(os.path.dirname(prop.user_config_file))
                     os.chown(prop.user_config_file, s[stat.ST_UID], s[stat.ST_GID])
                 except IOError:
@@ -182,7 +210,6 @@ class UserConfig(ConfigBase):
 
         else:
             # If running as root, conf file is None
-            prop.user_dir = None
             prop.user_config_file = None
             ConfigBase.__init__(self, None)
 
@@ -203,7 +230,7 @@ class UserConfig(ConfigBase):
 
 
 
-os.umask(0037)
+os.umask(0o037)
 
 # System Config File: Directories and build settings. Not altered after installation.
 sys_conf = SysConfig()
@@ -292,6 +319,47 @@ def cleanup_spinner():
         sys.stdout.write("\b \b")
         sys.stdout.flush()
 
+# Convert string to int and return a list.
+def xint(ver):
+    try:
+        l = [int(x) for x in ver.split('.')]
+    except:
+        pass
+    return l
+
+# In case of import failure of extension modules, check whether its a mixed python environment issue.   
+def check_extension_module_env(ext_mod):
+
+    flag = 0
+    ext_mod_so = ext_mod + '.so'
+
+    python_ver = xint((sys.version).split(' ')[0])              #find the current python version ; xint() to convert string to int, returns a list
+    if python_ver[0] == 3 :
+        python_ver = 3
+    else :
+        python_ver = 2
+
+    for dirpath, dirname, filenames in os.walk('/usr/lib/'):    #find the .so path
+        if ext_mod_so in filenames:
+            ext_path = dirpath
+            flag = 1
+
+    if flag == 0:
+        log.error('%s not present in the system. Please re-install HPLIP.' %ext_mod)
+        sys.exit(1)
+
+    m = re.search('python(\d(\.\d){0,2})', ext_path)            #get the python version where the .so file is found
+    ext_ver = xint(m.group(1))
+
+    if ext_ver[0] == 3:
+        ver = 3
+    else:
+        ver = 2
+
+    if python_ver != ver :                                      #compare the python version and the version where .so files are present
+        log.error("%s Extension module is missing from Python's path." %ext_mod)
+        log.info("To fix this issue, please refer to this 'http://hplipopensource.com/node/372'")
+        sys.exit(1)
 
 # Internal/messaging errors
 
@@ -334,11 +402,11 @@ class Error(Exception):
 
 
 # Make sure True and False are avail. in pre-2.2 versions
-try:
-    True
-except NameError:
-    True = (1==1)
-    False = not True
+#try:
+#    True
+#except NameError:
+#    True = (1==1)
+#    False = not True
 
 # as new translations are completed, add them here
 supported_locales =  { 'en_US': ('us', 'en', 'en_us', 'american', 'america', 'usa', 'english'),}
