@@ -7,7 +7,7 @@
 Summary: HP Linux Imaging and Printing Project
 Name: hplip
 Version: 3.15.9
-Release: 2%{?dist}
+Release: 3%{?dist}
 License: GPLv2+ and MIT
 Group: System Environment/Daemons
 
@@ -43,7 +43,7 @@ Patch24: hplip-do-not-crash-on-usb-failure.patch
 %global hpijs_epoch 1
 Requires: hpijs%{?_isa} = %{hpijs_epoch}:%{version}-%{release}
 Requires: %{name}-libs%{?_isa} = %{version}-%{release}
-Requires: python-imaging
+Requires: python-pillow
 Requires: cups
 Requires: wget
 Requires: gnupg
@@ -470,6 +470,9 @@ rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/hplip-systray.desktop
 %postun libs -p /sbin/ldconfig
 
 %changelog
+* Thu Nov 17 2016 Zdenek Dohnal <zdohnal@redhat.com> - 3.15.9-3
+- 1395862 - Missing dependency for hplip-3.15.9-2.el7.x86_64
+
 * Tue Jun 14 2016 Zdenek Dohnal <zdohnal@redhat.com> - 3.15.9-2
 - 1069619 - Rebase to version 3.15.9 extension - solving bug 1346196 (/usr/lib/cups/filter/hpps uses python -B which is unknown), which is duplicate of bug 1202451
 
